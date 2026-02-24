@@ -1,0 +1,41 @@
+# SafetyVision Configuration
+# ──────────────────────────
+
+input:
+  mode: usb                        # rtsp | usb
+  rtsp_url: "rtsp://192.168.1.100:554/stream"
+  usb_device: "/dev/video0"
+  width: 640
+  height: 480
+  fps: 30
+
+model:
+  path_onnx: "models/yolo26n.onnx"
+  runtime: onnxruntime              # onnxruntime | openvino
+  input_size: 640
+  conf_threshold: 0.45
+  iou_threshold: 0.50
+  person_class_id: 0
+
+alert:
+  siren_wav: "assets/audio/siren.wav"
+  voice_wav: "assets/audio/warning_voice.wav"
+  repeat_interval_sec: 5.0
+  min_clear_sec: 3.0
+
+perf:
+  max_queue_size: 1
+  capture_cpu_cores: [0]
+  inference_cpu_cores: [1, 2, 3]
+  inference_threads: 4
+  temporal_smoothing_frames: 3
+
+logging:
+  level: INFO
+  json_output: true
+  log_dir: "/var/log/safetyvision"
+  max_size_mb: 50
+
+health:
+  heartbeat_interval_sec: 1.0
+  camera_reconnect_max_backoff_sec: 30.0

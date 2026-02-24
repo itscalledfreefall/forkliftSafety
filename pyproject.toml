@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "safetyvision"
+version = "0.1.0"
+description = "Real-Time Forklift Safety System – CPU-first person detection with audio alerts"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=1.26",
+    "opencv-python-headless>=4.9",
+    "onnxruntime>=1.17",
+    "pyyaml>=6.0",
+    "sounddevice>=0.4",
+    "loguru>=0.7",
+]
+
+[project.optional-dependencies]
+openvino = ["openvino>=2024.0"]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov",
+    "ruff>=0.3",
+]
+
+[project.scripts]
+safetyvision = "safetyvision.supervisor:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

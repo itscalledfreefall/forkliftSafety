@@ -1,0 +1,23 @@
+[Unit]
+Description=SafetyVision Real-Time Forklift Safety System
+After=network.target sound.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=safetyvision
+Group=safetyvision
+SupplementaryGroups=audio video
+WorkingDirectory=/opt/safetyvision
+ExecStart=/opt/safetyvision/.venv/bin/safetyvision -c /opt/safetyvision/config/safetyvision.yaml
+Restart=always
+RestartSec=2
+CPUAffinity=0 1 2 3
+LimitNOFILE=8192
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=safetyvision
+Environment=SAFETYVISION_CONFIG=/opt/safetyvision/config/safetyvision.yaml
+
+[Install]
+WantedBy=multi-user.target
