@@ -122,3 +122,22 @@ class TestPostprocess:
 
         dets = _postprocess(output, 0.3, 0.5, person_class_id=0, scale=1.0, pad=(0, 0))
         assert len(dets) == 0
+
+    def test_nx84_layout_with_small_n_is_not_transposed(self):
+        # Shape (N, 84) with N < 84 should still be treated as N detections.
+        output = np.zeros((1, 2, 84), dtype=np.float32)
+        output[0, 0, 0] = 320
+        output[0, 0, 1] = 320
+        output[0, 0, 2] = 100
+        output[0, 0, 3] = 200
+        output[0, 0, 4] = 0.9
+
+        output[0, 1, 0] = 100
+        output[0, 1, 1] = 100
+        output[0, 1, 2] = 50
+        output[0, 1, 3] = 50
+        output[0, 1, 6] = 0.95
+
+        dets = _postprocess(output, 0.3, 0.5, person_class_id=0, scale=1.0, pad=(0, 0))
+        assert len(dets) == 1
+        assert dets[0].class_id == 0

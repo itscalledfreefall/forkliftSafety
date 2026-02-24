@@ -21,7 +21,9 @@ class MetricsCollector:
     def __init__(self, window_sec: float = 5.0):
         self._lock = threading.Lock()
         self._window = window_sec
-        self._frame_times: deque[float] = deque()
+        self._capture_frame_times: deque[float] = deque()
+        self._inference_frame_times: deque[float] = deque()
+        self._decision_frame_times: deque[float] = deque()
         self._capture_latencies: deque[float] = deque()
         self._inference_latencies: deque[float] = deque()
         self._decision_latencies: deque[float] = deque()
@@ -29,13 +31,28 @@ class MetricsCollector:
         self._alert_count = 0
         self._start_time = time.monotonic()
 
-    def record_frame(self) -> None:
+    def _record_stage_frame(self, dq: deque[float]) -> None:
         now = time.monotonic()
+        dq.append(now)
+        cutoff = now - self._window
+        while dq and dq[0] < cutoff:
+            dq.popleft()
+
+    def record_frame(self) -> None:
+        """Backward-compatible alias for inference stage FPS."""
+        self.record_inference_frame()
+
+    def record_capture_frame(self) -> None:
         with self._lock:
-            self._frame_times.append(now)
-            cutoff = now - self._window
-            while self._frame_times and self._frame_times[0] < cutoff:
-                self._frame_times.popleft()
+            self._record_stage_frame(self._capture_frame_times)
+
+    def record_inference_frame(self) -> None:
+        with self._lock:
+            self._record_stage_frame(self._inference_frame_times)
+
+    def record_decision_frame(self) -> None:
+        with self._lock:
+            self._record_stage_frame(self._decision_frame_times)
 
     def record_capture_latency(self, ms: float) -> None:
         with self._lock:
@@ -66,11 +83,14 @@ class MetricsCollector:
     def snapshot(self) -> PipelineMetrics:
         with self._lock:
             now = time.monotonic()
-            fps = len(self._frame_times)
-            if self._frame_times:
-                span = now - self._frame_times[0]
-                if span > 0:
-                    fps = len(self._frame_times) / span
+
+            def _fps(dq: deque[float]) -> float:
+                if not dq:
+                    return 0.0
+                span = now - dq[0]
+                if span <= 0:
+                    return 0.0
+                return len(dq) / span
 
             def _median(dq: deque) -> float:
                 if not dq:
@@ -79,8 +99,15 @@ class MetricsCollector:
                 mid = len(s) // 2
                 return s[mid]
 
+            capture_fps = _fps(self._capture_frame_times)
+            inference_fps = _fps(self._inference_frame_times)
+            decision_fps = _fps(self._decision_frame_times)
+
             return PipelineMetrics(
-                fps=round(fps, 1),
+                capture_fps=round(capture_fps, 1),
+                inference_fps=round(inference_fps, 1),
+                decision_fps=round(decision_fps, 1),
+                fps=round(inference_fps or capture_fps, 1),
                 capture_latency_ms=round(_median(self._capture_latencies), 2),
                 inference_latency_ms=round(_median(self._inference_latencies), 2),
                 decision_latency_ms=round(_median(self._decision_latencies), 2),
@@ -135,6 +162,9 @@ class MetricsWorker:
                     "type": "metrics",
                     "ts": time.time(),
                     "fps": snap.fps,
+                    "capture_fps": snap.capture_fps,
+                    "inference_fps": snap.inference_fps,
+                    "decision_fps": snap.decision_fps,
                     "latency_capture_ms": snap.capture_latency_ms,
                     "latency_inference_ms": snap.inference_latency_ms,
                     "latency_decision_ms": snap.decision_latency_ms,
@@ -146,8 +176,10 @@ class MetricsWorker:
                 logger.info(json.dumps(record))
             else:
                 logger.info(
-                    "FPS={} lat={:.1f}ms dropped={} alerts={} up={:.0f}s",
+                    "FPS(inf)={} capture={} decision={} lat={:.1f}ms dropped={} alerts={} up={:.0f}s",
                     snap.fps,
+                    snap.capture_fps,
+                    snap.decision_fps,
                     snap.total_latency_ms,
                     snap.frames_dropped,
                     snap.alert_count,

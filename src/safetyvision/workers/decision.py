@@ -23,12 +23,16 @@ class DecisionWorker:
         alert_queue: Queue,
         stop_event: threading.Event,
         latency_cb=None,
+        frame_cb=None,
+        alert_cb=None,
     ):
         self._cfg = cfg
         self._in_queue = in_queue
         self._alert_queue = alert_queue
         self._stop = stop_event
         self._latency_cb = latency_cb
+        self._frame_cb = frame_cb
+        self._alert_cb = alert_cb
         self._thread: Optional[threading.Thread] = None
 
         self._state = AlertState.IDLE
@@ -111,10 +115,14 @@ class DecisionWorker:
             if alert is not None:
                 try:
                     self._alert_queue.put_nowait(alert)
+                    if self._alert_cb:
+                        self._alert_cb()
                 except Exception:
                     logger.warning("Alert queue full, dropping alert event")
 
             if self._latency_cb:
                 self._latency_cb((t1 - t0) / 1e6)
+            if self._frame_cb:
+                self._frame_cb()
 
         logger.info("Decision worker stopped")

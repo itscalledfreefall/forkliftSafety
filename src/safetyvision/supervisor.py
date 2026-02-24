@@ -85,13 +85,21 @@ class Supervisor:
         self._detection_q: Queue = Queue(maxsize=qsize)
         self._alert_q: Queue = Queue(maxsize=qsize * 4)
 
-        self._capture = CaptureWorker(cfg, self._capture_q, self._stop)
+        self._capture = CaptureWorker(
+            cfg,
+            self._capture_q,
+            self._stop,
+            latency_cb=self._metrics.record_capture_latency,
+            frame_cb=self._metrics.record_capture_frame,
+            drop_cb=self._metrics.record_drop,
+        )
         self._inference = InferenceWorker(
             cfg,
             self._capture_q,
             self._detection_q,
             self._stop,
             latency_cb=self._metrics.record_inference_latency,
+            frame_cb=self._metrics.record_inference_frame,
         )
         self._decision = DecisionWorker(
             cfg,
@@ -99,6 +107,8 @@ class Supervisor:
             self._alert_q,
             self._stop,
             latency_cb=self._metrics.record_decision_latency,
+            frame_cb=self._metrics.record_decision_frame,
+            alert_cb=self._metrics.record_alert,
         )
         self._alert = AlertWorker(cfg, self._alert_q, self._stop)
         self._metrics_worker = MetricsWorker(cfg, self._metrics, self._stop)
@@ -152,8 +162,8 @@ class Supervisor:
 
         snap = self._metrics.snapshot()
         logger.info(
-            "Final stats: fps={}, total_latency={}ms, dropped={}, alerts={}, uptime={}s",
-            snap.fps, snap.total_latency_ms, snap.frames_dropped,
+            "Final stats: inf_fps={}, cap_fps={}, dec_fps={}, total_latency={}ms, dropped={}, alerts={}, uptime={}s",
+            snap.fps, snap.capture_fps, snap.decision_fps, snap.total_latency_ms, snap.frames_dropped,
             snap.alert_count, snap.uptime_sec,
         )
         logger.info("SafetyVision stopped cleanly")
@@ -167,7 +177,6 @@ class Supervisor:
             logger.warning("Health: camera disconnected, reconnecting...")
 
         snap = self._metrics.snapshot()
-        self._metrics.record_frame()
 
         if snap.fps > 0 and snap.total_latency_ms > 120:
             logger.warning(

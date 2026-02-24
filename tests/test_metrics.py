@@ -10,15 +10,28 @@ class TestMetricsCollector:
         m = MetricsCollector()
         snap = m.snapshot()
         assert snap.fps == 0.0
+        assert snap.capture_fps == 0.0
+        assert snap.inference_fps == 0.0
+        assert snap.decision_fps == 0.0
         assert snap.frames_dropped == 0
         assert snap.alert_count == 0
 
-    def test_frame_counting(self):
+    def test_inference_frame_counting(self):
         m = MetricsCollector(window_sec=10.0)
         for _ in range(10):
-            m.record_frame()
+            m.record_inference_frame()
         snap = m.snapshot()
         assert snap.fps > 0
+        assert snap.inference_fps > 0
+
+    def test_stage_fps_counting(self):
+        m = MetricsCollector(window_sec=10.0)
+        for _ in range(5):
+            m.record_capture_frame()
+            m.record_decision_frame()
+        snap = m.snapshot()
+        assert snap.capture_fps > 0
+        assert snap.decision_fps > 0
 
     def test_latency_recording(self):
         m = MetricsCollector()

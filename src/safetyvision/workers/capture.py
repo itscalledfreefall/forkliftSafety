@@ -65,12 +65,16 @@ class CaptureWorker:
         cfg: SafetyVisionConfig,
         out_queue: Queue,
         stop_event: threading.Event,
-        metrics_cb=None,
+        latency_cb=None,
+        frame_cb=None,
+        drop_cb=None,
     ):
         self._cfg = cfg
         self._out_queue = out_queue
         self._stop = stop_event
-        self._metrics_cb = metrics_cb
+        self._latency_cb = latency_cb
+        self._frame_cb = frame_cb
+        self._drop_cb = drop_cb
         self._cap: Optional[cv2.VideoCapture] = None
         self._thread: Optional[threading.Thread] = None
         self._seq = 0
@@ -141,11 +145,15 @@ class CaptureWorker:
                     break
                 continue
 
+            t0 = time.time_ns()
             ret, frame = self._cap.read()
+            t1 = time.time_ns()
             if not ret or frame is None:
                 logger.warning("Frame read failed, reconnecting")
                 self._reconnect()
                 continue
+            if self._latency_cb:
+                self._latency_cb((t1 - t0) / 1e6)
 
             ts = time.time_ns()
             self._seq += 1
@@ -162,11 +170,17 @@ class CaptureWorker:
                     try:
                         self._out_queue.get_nowait()
                         self._frames_dropped += 1
+                        if self._drop_cb:
+                            self._drop_cb()
                     except Exception:
                         break
                 self._out_queue.put_nowait(pkt)
+                if self._frame_cb:
+                    self._frame_cb()
             except Full:
                 self._frames_dropped += 1
+                if self._drop_cb:
+                    self._drop_cb()
 
         if self._cap:
             self._cap.release()

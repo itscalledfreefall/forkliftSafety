@@ -92,22 +92,30 @@ def _postprocess(
     """
     if output.ndim == 3:
         output = output[0]
+    if output.ndim != 2:
+        logger.warning("Unexpected model output rank: {}", output.ndim)
+        return []
 
-    # Detect format: (84, N) vs (N, 85+)
-    # YOLOv8 outputs (84, N) where 84 = 4 box + 80 classes, N = num detections
-    # YOLOv5 outputs (N, 85) where 85 = 4 box + 1 obj_conf + 80 classes
-    _FEATURE_DIMS = {84, 85, 80 + 4, 80 + 5}  # common YOLO feature counts
-    if output.shape[0] in _FEATURE_DIMS or (
-        output.shape[0] < output.shape[1]
-    ):
-        # (84, N) or similar -> transpose to (N, 84)
-        output = output.T
-        has_objectness = output.shape[1] > 84
+    # Detect format: (84|85, N) vs (N, 84|85)
+    # Use feature-dimension matching instead of shape ordering to avoid false transposes.
+    feature_dims = {84, 85}
+    rows, cols = output.shape
+    if cols in feature_dims and rows not in feature_dims:
+        parsed = output
+    elif rows in feature_dims and cols not in feature_dims:
+        parsed = output.T
+    elif cols in feature_dims:
+        parsed = output
+    elif rows in feature_dims:
+        parsed = output.T
     else:
-        has_objectness = output.shape[1] > 84
+        logger.warning("Unrecognized YOLO output shape: {}", output.shape)
+        return []
+
+    has_objectness = parsed.shape[1] > 84
 
     detections: List[Detection] = []
-    for row in output:
+    for row in parsed:
         if has_objectness:
             # YOLOv5: [cx, cy, w, h, obj_conf, cls0, cls1, ...]
             obj_conf = row[4]
@@ -143,12 +151,14 @@ class InferenceWorker:
         out_queue: Queue,
         stop_event: threading.Event,
         latency_cb=None,
+        frame_cb=None,
     ):
         self._cfg = cfg
         self._in_queue = in_queue
         self._out_queue = out_queue
         self._stop = stop_event
         self._latency_cb = latency_cb
+        self._frame_cb = frame_cb
         self._session = None
         self._thread: Optional[threading.Thread] = None
         # Temporal smoothing buffer
@@ -270,5 +280,7 @@ class InferenceWorker:
 
             if self._latency_cb:
                 self._latency_cb((t1 - t0) / 1e6)
+            if self._frame_cb:
+                self._frame_cb()
 
         logger.info("Inference worker stopped")

@@ -65,6 +65,9 @@ class Detection:
 class PipelineMetrics:
     """Rolling metrics snapshot."""
 
+    capture_fps: float = 0.0
+    inference_fps: float = 0.0
+    decision_fps: float = 0.0
     fps: float = 0.0
     capture_latency_ms: float = 0.0
     inference_latency_ms: float = 0.0
