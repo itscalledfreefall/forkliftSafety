@@ -1,0 +1,74 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+.tox/
+.nox/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Build and packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# Logs and local runtime files
+*.log
+*.pid
+*.seed
+
+# IDE/editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Jupyter
+.ipynb_checkpoints/
+
+# YOLO / computer vision artifacts
+datasets/
+data/
+runs/
+results/
+outputs/
+predictions/
+checkpoints/
+weights/
+models/
+*.pt
+*.onnx
+*.engine
+*.tflite
+*.pb
+*.h5
+
+# Media and generated assets
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.webm
+*.jpg
+*.jpeg
+*.png
+*.bmp
+*.tif
+*.tiff
+
+# Environment files
+.env
+.env.*
+
+# User-requested markdown ignore
+*.md
