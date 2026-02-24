@@ -96,6 +96,28 @@ def _postprocess(
         logger.warning("Unexpected model output rank: {}", output.ndim)
         return []
 
+    # Export with built-in NMS can produce (N, 6):
+    # [x1, y1, x2, y2, score, class_id]
+    if output.shape[1] == 6:
+        detections: List[Detection] = []
+        for row in output:
+            conf = float(row[4])
+            cls_id = int(row[5])
+            if cls_id != person_class_id or conf < conf_thresh:
+                continue
+            # These coordinates are already in original image space.
+            detections.append(
+                Detection(
+                    x1=float(row[0]),
+                    y1=float(row[1]),
+                    x2=float(row[2]),
+                    y2=float(row[3]),
+                    confidence=conf,
+                    class_id=cls_id,
+                )
+            )
+        return detections
+
     # Detect format: (84|85, N) vs (N, 84|85)
     # Use feature-dimension matching instead of shape ordering to avoid false transposes.
     feature_dims = {84, 85}

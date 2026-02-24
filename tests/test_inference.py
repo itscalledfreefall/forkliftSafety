@@ -141,3 +141,18 @@ class TestPostprocess:
         dets = _postprocess(output, 0.3, 0.5, person_class_id=0, scale=1.0, pad=(0, 0))
         assert len(dets) == 1
         assert dets[0].class_id == 0
+
+    def test_nx6_nms_output_format(self):
+        # Built-in NMS style output: [x1, y1, x2, y2, score, cls]
+        output = np.array(
+            [
+                [10.0, 20.0, 110.0, 220.0, 0.92, 0.0],  # person
+                [30.0, 40.0, 130.0, 240.0, 0.95, 2.0],  # non-person
+                [50.0, 60.0, 150.0, 260.0, 0.20, 0.0],  # below conf
+            ],
+            dtype=np.float32,
+        )
+        dets = _postprocess(output, 0.3, 0.5, person_class_id=0, scale=1.0, pad=(0, 0))
+        assert len(dets) == 1
+        assert dets[0].class_id == 0
+        assert dets[0].confidence == pytest.approx(0.92)
