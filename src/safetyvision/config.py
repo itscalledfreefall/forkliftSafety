@@ -23,6 +23,8 @@ class InputConfig:
 @dataclass
 class ModelConfig:
     path_onnx: str = "models/yolo26n.onnx"
+    path_openvino: str = "models/yolo26n_openvino_model/yolo26n.xml"
+    path_pt: str = "models/yolo26n.pt"
     runtime: str = "onnxruntime"
     input_size: int = 640
     conf_threshold: float = 0.45
@@ -115,8 +117,19 @@ def validate(cfg: SafetyVisionConfig) -> None:
         raise ConfigError(f"input.mode must be 'rtsp' or 'usb', got '{cfg.input.mode}'")
     if cfg.input.mode == "rtsp" and not cfg.input.rtsp_url:
         raise ConfigError("input.rtsp_url is required when mode is 'rtsp'")
-    if cfg.model.runtime not in ("onnxruntime", "openvino"):
-        raise ConfigError(f"model.runtime must be 'onnxruntime' or 'openvino', got '{cfg.model.runtime}'")
+    if cfg.model.runtime not in ("onnxruntime", "openvino", "ultralytics"):
+        raise ConfigError(
+            "model.runtime must be 'onnxruntime', 'openvino', or 'ultralytics', "
+            f"got '{cfg.model.runtime}'"
+        )
+    if cfg.model.runtime == "onnxruntime" and not cfg.model.path_onnx:
+        raise ConfigError("model.path_onnx is required when runtime is 'onnxruntime'")
+    if cfg.model.runtime == "openvino" and not (cfg.model.path_openvino or cfg.model.path_onnx):
+        raise ConfigError(
+            "model.path_openvino or model.path_onnx is required when runtime is 'openvino'"
+        )
+    if cfg.model.runtime == "ultralytics" and not cfg.model.path_pt:
+        raise ConfigError("model.path_pt is required when runtime is 'ultralytics'")
     if not 0.0 < cfg.model.conf_threshold < 1.0:
         raise ConfigError("model.conf_threshold must be between 0 and 1")
     if not 0.0 < cfg.model.iou_threshold < 1.0:

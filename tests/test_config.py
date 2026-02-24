@@ -59,6 +59,28 @@ class TestValidation:
         with pytest.raises(ConfigError, match="model.runtime"):
             validate(cfg)
 
+    def test_onnxruntime_requires_onnx_path(self):
+        cfg = SafetyVisionConfig()
+        cfg.model.runtime = "onnxruntime"
+        cfg.model.path_onnx = ""
+        with pytest.raises(ConfigError, match="path_onnx"):
+            validate(cfg)
+
+    def test_openvino_requires_some_model_path(self):
+        cfg = SafetyVisionConfig()
+        cfg.model.runtime = "openvino"
+        cfg.model.path_onnx = ""
+        cfg.model.path_openvino = ""
+        with pytest.raises(ConfigError, match="path_openvino"):
+            validate(cfg)
+
+    def test_ultralytics_requires_pt_path(self):
+        cfg = SafetyVisionConfig()
+        cfg.model.runtime = "ultralytics"
+        cfg.model.path_pt = ""
+        with pytest.raises(ConfigError, match="path_pt"):
+            validate(cfg)
+
     def test_conf_threshold_range(self):
         cfg = SafetyVisionConfig()
         cfg.model.conf_threshold = 1.5

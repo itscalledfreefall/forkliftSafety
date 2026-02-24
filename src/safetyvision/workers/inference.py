@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import threading
 import time
+from pathlib import Path
 from queue import Empty, Queue
 from typing import List, Optional
 
@@ -182,6 +183,8 @@ class InferenceWorker:
         self._latency_cb = latency_cb
         self._frame_cb = frame_cb
         self._session = None
+        self._pt_model = None
+        self._runtime_type = ""
         self._thread: Optional[threading.Thread] = None
         # Temporal smoothing buffer
         self._recent_detections: list[bool] = []
@@ -199,13 +202,14 @@ class InferenceWorker:
             self._thread.join(timeout=5.0)
 
     def _load_model(self) -> None:
-        model_path = self._cfg.model.path_onnx
         runtime = self._cfg.model.runtime
 
         if runtime == "openvino":
-            self._load_openvino(model_path)
+            self._load_openvino()
+        elif runtime == "ultralytics":
+            self._load_ultralytics(self._cfg.model.path_pt)
         else:
-            self._load_onnxruntime(model_path)
+            self._load_onnxruntime(self._cfg.model.path_onnx)
 
     def _load_onnxruntime(self, model_path: str) -> None:
         import onnxruntime as ort
@@ -223,10 +227,12 @@ class InferenceWorker:
         self._runtime_type = "onnxruntime"
         logger.info("ONNX Runtime model loaded: {}", model_path)
 
-    def _load_openvino(self, model_path: str) -> None:
+    def _load_openvino(self) -> None:
         try:
             from openvino.runtime import Core
 
+            ov_path = Path(self._cfg.model.path_openvino)
+            model_path = str(ov_path if ov_path.exists() else Path(self._cfg.model.path_onnx))
             core = Core()
             model = core.read_model(model_path)
             config = {"INFERENCE_NUM_THREADS": str(self._cfg.perf.inference_threads)}
@@ -235,8 +241,20 @@ class InferenceWorker:
             self._runtime_type = "openvino"
             logger.info("OpenVINO model loaded: {}", model_path)
         except Exception as e:
-            logger.warning("OpenVINO load failed ({}), falling back to ONNX Runtime", e)
-            self._load_onnxruntime(model_path)
+            fallback_path = self._cfg.model.path_onnx
+            logger.warning(
+                "OpenVINO load failed ({}), falling back to ONNX Runtime with {}",
+                e,
+                fallback_path,
+            )
+            self._load_onnxruntime(fallback_path)
+
+    def _load_ultralytics(self, model_path: str) -> None:
+        from ultralytics import YOLO
+
+        self._pt_model = YOLO(model_path)
+        self._runtime_type = "ultralytics"
+        logger.info("Ultralytics PT model loaded: {}", model_path)
 
     def _infer(self, blob: np.ndarray) -> np.ndarray:
         if self._runtime_type == "openvino":
@@ -244,6 +262,30 @@ class InferenceWorker:
             return self._infer_request.get_output_tensor(0).data.copy()
         else:
             return self._session.run(None, {self._input_name: blob})[0]
+
+    def _infer_pt(self, frame: np.ndarray) -> np.ndarray:
+        """Run Ultralytics PT inference and return Nx6 [x1,y1,x2,y2,conf,cls]."""
+        results = self._pt_model.predict(
+            source=frame,
+            imgsz=self._cfg.model.input_size,
+            conf=self._cfg.model.conf_threshold,
+            iou=self._cfg.model.iou_threshold,
+            verbose=False,
+            device="cpu",
+            classes=[self._cfg.model.person_class_id],
+        )
+        if not results:
+            return np.empty((0, 6), dtype=np.float32)
+
+        boxes = results[0].boxes
+        if boxes is None or boxes.data is None:
+            return np.empty((0, 6), dtype=np.float32)
+        data = boxes.data
+        if hasattr(data, "detach"):
+            data = data.detach().cpu().numpy()
+        else:
+            data = np.asarray(data)
+        return data.astype(np.float32, copy=False)
 
     def _apply_temporal_smoothing(self, person_detected: bool) -> bool:
         """Require N consecutive frames of detection to confirm presence."""
@@ -265,8 +307,12 @@ class InferenceWorker:
                 continue
 
             t0 = time.time_ns()
-            blob, scale, pad = _preprocess(pkt.frame, input_size)
-            raw_out = self._infer(blob)
+            if self._runtime_type == "ultralytics":
+                raw_out = self._infer_pt(pkt.frame)
+                scale, pad = 1.0, (0, 0)
+            else:
+                blob, scale, pad = _preprocess(pkt.frame, input_size)
+                raw_out = self._infer(blob)
             dets = _postprocess(
                 raw_out,
                 self._cfg.model.conf_threshold,

@@ -87,20 +87,36 @@ def _make_infer_fn(cfg, runtime: str):
             cfg.model.path_onnx, sess_options=sess_opts, providers=["CPUExecutionProvider"]
         )
         input_name = session.get_inputs()[0].name
-        return lambda blob: session.run(None, {input_name: blob})
+        return lambda blob, frame: session.run(None, {input_name: blob})
 
     if runtime == "openvino":
         from openvino.runtime import Core
 
+        model_path = cfg.model.path_openvino
+        if not Path(model_path).exists():
+            model_path = cfg.model.path_onnx
         core = Core()
-        model = core.read_model(cfg.model.path_onnx)
+        model = core.read_model(model_path)
         compiled = core.compile_model(
             model,
             "CPU",
             {"INFERENCE_NUM_THREADS": str(cfg.perf.inference_threads)},
         )
         infer_request = compiled.create_infer_request()
-        return lambda blob: infer_request.infer({0: blob})
+        return lambda blob, frame: infer_request.infer({0: blob})
+
+    if runtime == "ultralytics":
+        from ultralytics import YOLO
+
+        model = YOLO(cfg.model.path_pt)
+        return lambda blob, frame: model.predict(
+            source=frame,
+            imgsz=cfg.model.input_size,
+            conf=cfg.model.conf_threshold,
+            iou=cfg.model.iou_threshold,
+            verbose=False,
+            device="cpu",
+        )
 
     raise ValueError(f"Unsupported runtime: {runtime}")
 
@@ -118,12 +134,12 @@ def benchmark_inference(cfg, runtime: str, n_frames: int = 300) -> dict:
 
     # Warmup
     for _ in range(10):
-        infer(blob)
+        infer(blob, dummy)
 
     latencies = []
     for _ in range(n_frames):
         t0 = time.monotonic()
-        infer(blob)
+        infer(blob, dummy)
         t1 = time.monotonic()
         latencies.append((t1 - t0) * 1000)
 
@@ -144,7 +160,7 @@ def main():
     parser.add_argument("--inference-frames", type=int, default=300)
     parser.add_argument(
         "--runtime",
-        choices=["from-config", "onnxruntime", "openvino", "both"],
+        choices=["from-config", "onnxruntime", "openvino", "ultralytics", "both", "all"],
         default="both",
         help="Inference runtime(s) to benchmark",
     )
@@ -163,6 +179,8 @@ def main():
     if not args.skip_inference:
         if args.runtime == "both":
             runtimes = ["onnxruntime", "openvino"]
+        elif args.runtime == "all":
+            runtimes = ["onnxruntime", "openvino", "ultralytics"]
         elif args.runtime == "from-config":
             runtimes = [cfg.model.runtime]
         else:

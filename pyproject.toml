@@ -18,6 +18,7 @@ dependencies = [
 
 [project.optional-dependencies]
 openvino = ["openvino>=2024.0"]
+ultralytics = ["ultralytics>=8.2"]
 dev = [
     "pytest>=8.0",
     "pytest-cov",

@@ -11,7 +11,9 @@ input:
 
 model:
   path_onnx: "models/yolo26n.onnx"
-  runtime: onnxruntime              # onnxruntime | openvino
+  path_openvino: "models/yolo26n_openvino_model/yolo26n.xml"
+  path_pt: "models/yolo26n.pt"
+  runtime: onnxruntime              # onnxruntime | openvino | ultralytics
   input_size: 640
   conf_threshold: 0.45
   iou_threshold: 0.50

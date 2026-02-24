@@ -53,9 +53,21 @@ def _startup_checks(cfg: SafetyVisionConfig) -> list[str]:
     """Run pre-flight checks. Returns list of error messages (empty = OK)."""
     errors: list[str] = []
 
-    # Model file
-    if not Path(cfg.model.path_onnx).exists():
-        errors.append(f"Model file not found: {cfg.model.path_onnx}")
+    # Model files (runtime-dependent)
+    if cfg.model.runtime == "ultralytics":
+        if not Path(cfg.model.path_pt).exists():
+            errors.append(f"PT model file not found: {cfg.model.path_pt}")
+    elif cfg.model.runtime == "openvino":
+        ov_path = Path(cfg.model.path_openvino)
+        onnx_path = Path(cfg.model.path_onnx)
+        if not ov_path.exists() and not onnx_path.exists():
+            errors.append(
+                "OpenVINO runtime requires either model.path_openvino or model.path_onnx to exist "
+                f"(missing: {cfg.model.path_openvino}, {cfg.model.path_onnx})"
+            )
+    else:
+        if not Path(cfg.model.path_onnx).exists():
+            errors.append(f"Model file not found: {cfg.model.path_onnx}")
 
     # Audio files (warn, don't block)
     for label, path in [("siren", cfg.alert.siren_wav), ("voice", cfg.alert.voice_wav)]:
