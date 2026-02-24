@@ -38,7 +38,7 @@ def _build_gst_pipeline(cfg: SafetyVisionConfig) -> str:
 def _open_usb(cfg: SafetyVisionConfig) -> cv2.VideoCapture:
     """Open a USB/V4L2 camera with explicit settings."""
     cap = cv2.VideoCapture(cfg.input.usb_device, cv2.CAP_V4L2)
-    cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+    cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"YUYV"))
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, cfg.input.width)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, cfg.input.height)
     cap.set(cv2.CAP_PROP_FPS, cfg.input.fps)
