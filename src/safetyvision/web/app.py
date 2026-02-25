@@ -51,10 +51,6 @@ ADMIN_PASS_HASH = hashlib.sha256(
     os.environ.get("SAFETYVISION_UI_PASS", "safetyvision").encode()
 ).hexdigest()
 
-# Camera handle for live stream
-_cap: Optional[cv2.VideoCapture] = None
-_cap_lock = asyncio.Lock()
-
 # Rate limiter for apply
 _last_apply_ts: float = 0.0
 APPLY_COOLDOWN = 5.0  # seconds
@@ -241,23 +237,41 @@ async def apply_config(_token: str = Depends(_check_session)):
 # ---------------------------------------------------------------------------
 # Live MJPEG stream
 # ---------------------------------------------------------------------------
-async def _get_camera() -> cv2.VideoCapture:
-    global _cap
-    async with _cap_lock:
-        if _cap is None or not _cap.isOpened():
-            raw = _load_raw_config()
-            inp = raw.get("input", {})
-            mode = inp.get("mode", "usb")
-            if mode == "usb":
-                dev = inp.get("usb_device", "/dev/video0")
-                _cap = cv2.VideoCapture(dev, cv2.CAP_V4L2)
-            else:
-                _cap = cv2.VideoCapture(inp.get("rtsp_url", ""))
-            _cap.set(cv2.CAP_PROP_FRAME_WIDTH, inp.get("width", 640))
-            _cap.set(cv2.CAP_PROP_FRAME_HEIGHT, inp.get("height", 480))
-            _cap.set(cv2.CAP_PROP_FPS, inp.get("fps", 30))
-            _cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-        return _cap
+import threading
+
+_stream_frame: Optional[bytes] = None
+_stream_lock = threading.Lock()
+_stream_thread: Optional[threading.Thread] = None
+
+
+def _open_stream_camera() -> cv2.VideoCapture:
+    """Open camera for the stream using the same auto/usb/rtsp logic."""
+    raw = _load_raw_config()
+    inp = raw.get("input", {})
+    mode = inp.get("mode", "usb")
+    dev = inp.get("usb_device", "/dev/video0")
+    rtsp = inp.get("rtsp_url", "")
+
+    cap = None
+    if mode in ("usb", "auto"):
+        if os.path.exists(dev):
+            cap = cv2.VideoCapture(dev, cv2.CAP_V4L2)
+            cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"YUYV"))
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, inp.get("width", 640))
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, inp.get("height", 480))
+            cap.set(cv2.CAP_PROP_FPS, inp.get("fps", 30))
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            if cap.isOpened():
+                return cap
+            cap.release()
+
+    if mode in ("rtsp", "auto") and rtsp:
+        cap = cv2.VideoCapture(rtsp)
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        if cap.isOpened():
+            return cap
+
+    return cv2.VideoCapture()
 
 
 def _draw_zone_overlay(frame: np.ndarray, yellow_y: float, red_y: float) -> np.ndarray:
@@ -277,40 +291,63 @@ def _draw_zone_overlay(frame: np.ndarray, yellow_y: float, red_y: float) -> np.n
     return frame
 
 
-async def _mjpeg_generator(overlay: bool = True):
-    raw = _load_raw_config()
-    alert = raw.get("alert", {})
-    yellow_y = alert.get("yellow_start_y", 0.33)
-    red_y = alert.get("red_start_y", 0.66)
+def _stream_capture_loop():
+    """Background thread: continuously grabs frames and JPEG-encodes them."""
+    global _stream_frame
+    cap = _open_stream_camera()
+    if not cap.isOpened():
+        return
 
-    cap = await _get_camera()
     while True:
         ret, frame = cap.read()
         if not ret:
-            await asyncio.sleep(0.1)
+            time.sleep(0.1)
             continue
 
-        if overlay:
-            frame = _draw_zone_overlay(frame, yellow_y, red_y)
+        raw = _load_raw_config()
+        alert = raw.get("alert", {})
+        yellow_y = alert.get("yellow_start_y", 0.33)
+        red_y = alert.get("red_start_y", 0.66)
+        frame = _draw_zone_overlay(frame, yellow_y, red_y)
 
         _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
-        yield (
-            b"--frame\r\n"
-            b"Content-Type: image/jpeg\r\n\r\n"
-            + buf.tobytes()
-            + b"\r\n"
-        )
-        await asyncio.sleep(0.033)  # ~30fps
+        with _stream_lock:
+            _stream_frame = buf.tobytes()
+
+
+def _ensure_stream_thread():
+    """Start the background capture thread if not running."""
+    global _stream_thread
+    if _stream_thread is not None and _stream_thread.is_alive():
+        return
+    _stream_thread = threading.Thread(target=_stream_capture_loop, daemon=True)
+    _stream_thread.start()
+
+
+async def _mjpeg_generator():
+    _ensure_stream_thread()
+    last_frame = None
+    while True:
+        with _stream_lock:
+            frame = _stream_frame
+        if frame is not None and frame is not last_frame:
+            last_frame = frame
+            yield (
+                b"--frame\r\n"
+                b"Content-Type: image/jpeg\r\n\r\n"
+                + frame
+                + b"\r\n"
+            )
+        await asyncio.sleep(0.033)
 
 
 @app.get("/api/stream.mjpg")
-async def stream(request: Request, overlay: bool = True):
-    # Auth check via cookie
+async def stream(request: Request):
     token = request.cookies.get("sv_session")
     if not token or token not in SESSION_TOKENS:
         raise HTTPException(status_code=401)
     return StreamingResponse(
-        _mjpeg_generator(overlay),
+        _mjpeg_generator(),
         media_type="multipart/x-mixed-replace; boundary=frame",
     )
 
