@@ -105,6 +105,12 @@ class TestValidation:
         with pytest.raises(ConfigError, match="distance_smoothing_alpha"):
             validate(cfg)
 
+    def test_invalid_min_alert_confidence(self):
+        cfg = SafetyVisionConfig()
+        cfg.alert.min_alert_confidence = 1.2
+        with pytest.raises(ConfigError, match="min_alert_confidence"):
+            validate(cfg)
+
     def test_valid_config_passes(self):
         cfg = SafetyVisionConfig()
         validate(cfg)  # should not raise

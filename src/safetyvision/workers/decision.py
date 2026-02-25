@@ -126,6 +126,8 @@ class DecisionWorker:
         """Map detection size to alert level."""
         if not event.person_detected:
             return ""
+        if event.confidence_max < self._cfg.alert.min_alert_confidence:
+            return ""
         ratio = self._smoothed_area_ratio
         h = self._cfg.alert.zone_hysteresis_ratio
         danger_enter = self._cfg.alert.close_area_ratio + h

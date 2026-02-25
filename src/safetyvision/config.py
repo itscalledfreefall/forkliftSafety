@@ -38,9 +38,10 @@ class AlertConfig:
     voice_wav: str = "assets/audio/warning_voice.wav"
     close_area_ratio: float = 0.20
     medium_area_ratio: float = 0.08
+    min_alert_confidence: float = 0.60
     zone_hysteresis_ratio: float = 0.02
     distance_smoothing_alpha: float = 0.4
-    always_announce_person: bool = True
+    always_announce_person: bool = False
     repeat_interval_sec: float = 0.75
     min_clear_sec: float = 3.0
 
@@ -149,6 +150,8 @@ def validate(cfg: SafetyVisionConfig) -> None:
         raise ConfigError("alert.close_area_ratio must be between 0 and 1")
     if cfg.alert.close_area_ratio <= cfg.alert.medium_area_ratio:
         raise ConfigError("alert.close_area_ratio must be greater than alert.medium_area_ratio")
+    if not 0.0 < cfg.alert.min_alert_confidence < 1.0:
+        raise ConfigError("alert.min_alert_confidence must be between 0 and 1")
     if not 0.0 <= cfg.alert.zone_hysteresis_ratio < 0.5:
         raise ConfigError("alert.zone_hysteresis_ratio must be between 0 and 0.5")
     if not 0.0 < cfg.alert.distance_smoothing_alpha <= 1.0:

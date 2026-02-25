@@ -33,9 +33,10 @@ def worker():
     cfg.alert.min_clear_sec = 3.0
     cfg.alert.close_area_ratio = 0.20
     cfg.alert.medium_area_ratio = 0.08
+    cfg.alert.min_alert_confidence = 0.60
     cfg.alert.zone_hysteresis_ratio = 0.02
     cfg.alert.distance_smoothing_alpha = 1.0
-    cfg.alert.always_announce_person = True
+    cfg.alert.always_announce_person = False
     w = DecisionWorker(cfg, Queue(), Queue(), threading.Event())
     return w
 
@@ -67,9 +68,8 @@ class TestAlertStateMachine:
     def test_far_zone_does_not_trigger(self, worker):
         event = _make_event(person=True, ts_ns=1_000_000_000, area_ratio=0.02)
         alert = worker.process_event(event)
-        assert alert is not None
-        assert alert.sound_key == "medium"
-        assert worker.state == AlertState.TRIGGERED
+        assert alert is None
+        assert worker.state == AlertState.IDLE
 
     def test_no_repeat_before_interval(self, worker):
         # Trigger
@@ -93,6 +93,12 @@ class TestAlertStateMachine:
         worker.process_event(_make_event(person=True, ts_ns=1_000_000_000, area_ratio=0.10))
         alert = worker.process_event(_make_event(person=True, ts_ns=2_000_000_000, area_ratio=0.25))
         assert alert is None
+
+    def test_low_confidence_does_not_trigger(self, worker):
+        event = _make_event(person=True, ts_ns=1_000_000_000, conf=0.50, area_ratio=0.25)
+        alert = worker.process_event(event)
+        assert alert is None
+        assert worker.state == AlertState.IDLE
 
     def test_clears_after_min_clear(self, worker):
         worker.process_event(_make_event(person=True, ts_ns=1_000_000_000))
