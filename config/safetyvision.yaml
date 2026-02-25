@@ -2,8 +2,8 @@
 # ──────────────────────────
 
 input:
-  mode: usb                        # rtsp | usb
-  rtsp_url: "rtsp://192.168.1.100:554/stream"
+  mode: auto                       # auto | rtsp | usb
+  rtsp_url: "rtsp://192.168.1.108:554/stream"
   usb_device: "/dev/video0"
   width: 640
   height: 480

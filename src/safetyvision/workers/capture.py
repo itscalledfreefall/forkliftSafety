@@ -57,6 +57,41 @@ def _open_rtsp(cfg: SafetyVisionConfig) -> cv2.VideoCapture:
     return cap
 
 
+def _detect_camera(cfg: SafetyVisionConfig) -> tuple[cv2.VideoCapture, str]:
+    """Auto-detect which camera is available.
+
+    Tries USB first (lower latency), then RTSP.
+    Returns (capture, source_id) where source_id is 'usb' or 'rtsp'.
+    """
+    # Try USB capture card
+    usb_dev = cfg.input.usb_device
+    if os.path.exists(usb_dev):
+        logger.info("Auto-detect: USB device {} found, trying...", usb_dev)
+        cap = _open_usb(cfg)
+        if cap.isOpened():
+            ret, frame = cap.read()
+            if ret and frame is not None:
+                logger.info("Auto-detect: USB camera active at {}", usb_dev)
+                return cap, "usb"
+            cap.release()
+        logger.info("Auto-detect: USB device exists but not readable")
+
+    # Try RTSP
+    if cfg.input.rtsp_url:
+        logger.info("Auto-detect: Trying RTSP at {}", cfg.input.rtsp_url)
+        cap = _open_rtsp(cfg)
+        if cap.isOpened():
+            ret, frame = cap.read()
+            if ret and frame is not None:
+                logger.info("Auto-detect: RTSP camera active at {}", cfg.input.rtsp_url)
+                return cap, "rtsp"
+            cap.release()
+        logger.info("Auto-detect: RTSP not available")
+
+    logger.error("Auto-detect: No camera found (USB={}, RTSP={})", usb_dev, cfg.input.rtsp_url)
+    return cv2.VideoCapture(), "none"
+
+
 class CaptureWorker:
     """Continuously captures frames and pushes the latest to a bounded queue."""
 
@@ -76,6 +111,7 @@ class CaptureWorker:
         self._frame_cb = frame_cb
         self._drop_cb = drop_cb
         self._cap: Optional[cv2.VideoCapture] = None
+        self._active_source: str = ""
         self._thread: Optional[threading.Thread] = None
         self._seq = 0
         self._frames_dropped = 0
@@ -101,8 +137,14 @@ class CaptureWorker:
             self._thread.join(timeout=5.0)
 
     def _open_camera(self) -> cv2.VideoCapture:
+        if self._cfg.input.mode == "auto":
+            cap, source = _detect_camera(self._cfg)
+            self._active_source = source
+            return cap
         if self._cfg.input.mode == "rtsp":
+            self._active_source = "rtsp"
             return _open_rtsp(self._cfg)
+        self._active_source = "usb"
         return _open_usb(self._cfg)
 
     def _reconnect(self) -> None:
@@ -160,7 +202,7 @@ class CaptureWorker:
             pkt = FramePacket(
                 frame=frame,
                 timestamp_ns=ts,
-                source_id=self._cfg.input.mode,
+                source_id=self._active_source or self._cfg.input.mode,
                 seq=self._seq,
             )
 

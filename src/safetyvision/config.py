@@ -121,8 +121,8 @@ class ConfigError(ValueError):
 
 def validate(cfg: SafetyVisionConfig) -> None:
     """Raise ConfigError on invalid values."""
-    if cfg.input.mode not in ("rtsp", "usb"):
-        raise ConfigError(f"input.mode must be 'rtsp' or 'usb', got '{cfg.input.mode}'")
+    if cfg.input.mode not in ("rtsp", "usb", "auto"):
+        raise ConfigError(f"input.mode must be 'rtsp', 'usb', or 'auto', got '{cfg.input.mode}'")
     if cfg.input.mode == "rtsp" and not cfg.input.rtsp_url:
         raise ConfigError("input.rtsp_url is required when mode is 'rtsp'")
     if cfg.model.runtime not in ("onnxruntime", "openvino", "ultralytics"):
