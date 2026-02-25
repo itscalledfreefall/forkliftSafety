@@ -1,11 +1,11 @@
-# SafetyVision Configuration
-# ──────────────────────────
+# SafetyVision Production Configuration
+# ──────────────────────────────────────
 
 input:
   mode: rtsp                       # rtsp | auto | usb
   # Sub stream (640x480, 25fps) for YOLO detection
   rtsp_url: "rtsp://admin:matrix18@192.168.1.108:554/cam/realmonitor?channel=1&subtype=1"
-  # Main stream (1280x960, 15fps) for web UI live view
+  # Main stream (1280x720, 15fps) for web UI live view
   rtsp_url_main: "rtsp://admin:matrix18@192.168.1.108:554/cam/realmonitor?channel=1&subtype=0"
   usb_device: "/dev/video0"
   width: 640
@@ -13,24 +13,20 @@ input:
   fps: 25
 
 model:
-  path_onnx: "models/yolo26n.onnx"                         # ONNX model path
-  path_openvino: "models/yolo26n_openvino_model/yolo26n.xml"  # OpenVINO IR XML path
-  path_pt: "models/yolo26n.pt"                             # Ultralytics PT model path
-  runtime: onnxruntime                                     # onnxruntime | openvino | ultralytics
+  path_onnx: "models/yolo26n.onnx"
+  path_openvino: "models/yolo26n_openvino_model/yolo26n.xml"
+  path_pt: "models/yolo26n.pt"
+  runtime: onnxruntime
   input_size: 512
   conf_threshold: 0.50
   iou_threshold: 0.50
   person_class_id: 0
 
 alert:
-  siren_wav: "assets/audio/danger.wav"       # played in red zone
-  voice_wav: "assets/audio/medium.wav"       # played in yellow zone
-  # Horizontal band zone cut lines (normalized Y, 0=top, 1=bottom):
-  #   0.00 .. 0.33  = green  (top)    → no sound
-  #   0.33 .. 0.66  = yellow (middle) → medium sound
-  #   0.66 .. 1.00  = red   (bottom) → danger sound
-  yellow_start_y: 0.33
-  red_start_y: 0.66
+  siren_wav: "assets/audio/danger.wav"
+  voice_wav: "assets/audio/medium.wav"
+  yellow_start_y: 0.29
+  red_start_y: 0.78
   min_alert_confidence: 0.55
   always_announce_person: false
   repeat_interval_sec: 3.0
