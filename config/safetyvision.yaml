@@ -10,18 +10,18 @@ input:
   fps: 30
 
 model:
-  path_onnx: "models/yolo26n.onnx"
-  path_openvino: "models/yolo26n_openvino_model/yolo26n.xml"
-  path_pt: "models/yolo26n.pt"
-  runtime: onnxruntime              # onnxruntime | openvino | ultralytics
+  path_onnx: "models/yolo26n.onnx"                         # ONNX model path
+  path_openvino: "models/yolo26n_openvino_model/yolo26n.xml"  # OpenVINO IR XML path
+  path_pt: "models/yolo26n.pt"                             # Ultralytics PT model path
+  runtime: onnxruntime                                     # onnxruntime | openvino | ultralytics
   input_size: 640
   conf_threshold: 0.45
   iou_threshold: 0.50
   person_class_id: 0
 
 alert:
-  siren_wav: "assets/audio/siren.wav"
-  voice_wav: "assets/audio/warning_voice.wav"
+  siren_wav: "assets/audio/danger.wav"
+  voice_wav: "assets/audio/medium.wav"
   repeat_interval_sec: 5.0
   min_clear_sec: 3.0
 
@@ -35,7 +35,7 @@ perf:
 logging:
   level: INFO
   json_output: true
-  log_dir: "/var/log/safetyvision"
+  log_dir: "./logs"
   max_size_mb: 50
 
 health:
