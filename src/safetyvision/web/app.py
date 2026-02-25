@@ -245,7 +245,7 @@ _stream_thread: Optional[threading.Thread] = None
 
 
 def _open_stream_camera() -> cv2.VideoCapture:
-    """Open camera for the web UI live view.
+    """Open camera for the web UI live view with low-latency settings.
 
     Uses the main stream (rtsp_url_main) for higher resolution preview.
     Falls back to sub stream (rtsp_url) or USB if main stream unavailable.
@@ -257,16 +257,19 @@ def _open_stream_camera() -> cv2.VideoCapture:
     rtsp_main = inp.get("rtsp_url_main", "")
     rtsp_sub = inp.get("rtsp_url", "")
 
-    # For RTSP: prefer main stream for live view
-    if mode in ("rtsp", "auto") and rtsp_main:
-        cap = cv2.VideoCapture(rtsp_main)
+    # For RTSP: prefer main stream, use UDP + low-latency flags
+    for url in ([rtsp_main, rtsp_sub] if mode in ("rtsp", "auto") else []):
+        if not url:
+            continue
+        # Try FFMPEG with UDP transport for lowest latency
+        os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;udp|fflags;nobuffer|flags;low_delay|framedrop;1"
+        cap = cv2.VideoCapture(url, cv2.CAP_FFMPEG)
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         if cap.isOpened():
             return cap
-
-    # Fallback to sub stream
-    if mode in ("rtsp", "auto") and rtsp_sub:
-        cap = cv2.VideoCapture(rtsp_sub)
+        # Fallback to TCP
+        os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|fflags;nobuffer|flags;low_delay|framedrop;1"
+        cap = cv2.VideoCapture(url, cv2.CAP_FFMPEG)
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         if cap.isOpened():
             return cap
@@ -304,28 +307,32 @@ def _draw_zone_overlay(frame: np.ndarray, yellow_y: float, red_y: float) -> np.n
 def _stream_capture_loop():
     """Background thread: grabs frames from the main stream for live view.
 
-    RTSP main stream and sub stream are independent connections, so the
-    web UI can always show the live view even while the detection service
-    runs on the sub stream.  Only falls back to a placeholder when the
-    camera cannot be opened at all.
+    Low-latency strategy:
+    - Grab+discard frames to drain the decode buffer, only process the latest.
+    - Cache zone config (reload every 2 seconds, not every frame).
+    - Use JPEG quality 50 for fast encoding.
     """
     global _stream_frame
     cap = None
+    yellow_y, red_y = 0.33, 0.66
+    config_refresh_ns = 0
 
     while True:
         if cap is None or not cap.isOpened():
             cap = _open_stream_camera()
             if not cap.isOpened():
-                # Show offline placeholder
                 placeholder = np.zeros((480, 640, 3), dtype=np.uint8)
                 cv2.putText(placeholder, "Camera unavailable",
                             (160, 230), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 255), 2)
-                _, buf = cv2.imencode(".jpg", placeholder, [cv2.IMWRITE_JPEG_QUALITY, 70])
+                _, buf = cv2.imencode(".jpg", placeholder, [cv2.IMWRITE_JPEG_QUALITY, 50])
                 with _stream_lock:
                     _stream_frame = buf.tobytes()
                 time.sleep(2.0)
                 continue
 
+        # Drain buffer: grab without decoding to skip stale frames
+        cap.grab()
+        cap.grab()
         ret, frame = cap.read()
         if not ret:
             cap.release()
@@ -333,13 +340,18 @@ def _stream_capture_loop():
             time.sleep(0.5)
             continue
 
-        raw = _load_raw_config()
-        alert = raw.get("alert", {})
-        yellow_y = alert.get("yellow_start_y", 0.33)
-        red_y = alert.get("red_start_y", 0.66)
+        # Refresh zone config every 2 seconds
+        now = time.time_ns()
+        if now - config_refresh_ns > 2_000_000_000:
+            raw = _load_raw_config()
+            alert = raw.get("alert", {})
+            yellow_y = alert.get("yellow_start_y", 0.33)
+            red_y = alert.get("red_start_y", 0.66)
+            config_refresh_ns = now
+
         frame = _draw_zone_overlay(frame, yellow_y, red_y)
 
-        _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
+        _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 50])
         with _stream_lock:
             _stream_frame = buf.tobytes()
 
