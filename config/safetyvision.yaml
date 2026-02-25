@@ -39,7 +39,7 @@ alert:
   zone_hysteresis_ratio: 0.03
   distance_smoothing_alpha: 0.30
   always_announce_person: false
-  repeat_interval_sec: 1.5
+  repeat_interval_sec: 3.0
   min_clear_sec: 3.0
 
 perf:
