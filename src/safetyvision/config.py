@@ -26,7 +26,7 @@ class ModelConfig:
     path_openvino: str = "models/yolo26n_openvino_model/yolo26n.xml"
     path_pt: str = "models/yolo26n.pt"
     runtime: str = "onnxruntime"
-    input_size: int = 640
+    input_size: int = 512
     conf_threshold: float = 0.45
     iou_threshold: float = 0.50
     person_class_id: int = 0
