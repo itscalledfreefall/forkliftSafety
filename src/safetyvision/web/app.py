@@ -301,57 +301,36 @@ def _draw_zone_overlay(frame: np.ndarray, yellow_y: float, red_y: float) -> np.n
     return frame
 
 
-def _is_service_running() -> bool:
-    """Check if the main safetyvision service holds the camera."""
-    try:
-        result = subprocess.run(
-            ["sudo", "systemctl", "is-active", "safetyvision"],
-            capture_output=True, text=True, timeout=3,
-        )
-        return result.stdout.strip() == "active"
-    except Exception:
-        return False
-
-
 def _stream_capture_loop():
-    """Background thread: grabs frames when the main service is NOT running.
+    """Background thread: grabs frames from the main stream for live view.
 
-    When safetyvision.service is active it owns the camera, so the web UI
-    shows a 'service running' placeholder instead of competing for /dev/video*.
+    RTSP main stream and sub stream are independent connections, so the
+    web UI can always show the live view even while the detection service
+    runs on the sub stream.  Only falls back to a placeholder when the
+    camera cannot be opened at all.
     """
     global _stream_frame
     cap = None
 
     while True:
-        service_active = _is_service_running()
-
-        if service_active:
-            # Release camera if we were holding it
-            if cap is not None:
-                cap.release()
-                cap = None
-            # Generate a placeholder frame
-            placeholder = np.zeros((480, 640, 3), dtype=np.uint8)
-            cv2.putText(placeholder, "SafetyVision service is running",
-                        (60, 220), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 200, 0), 2)
-            cv2.putText(placeholder, "Camera in use by detection pipeline",
-                        (80, 260), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (150, 150, 150), 1)
-            _, buf = cv2.imencode(".jpg", placeholder, [cv2.IMWRITE_JPEG_QUALITY, 70])
-            with _stream_lock:
-                _stream_frame = buf.tobytes()
-            time.sleep(2.0)
-            continue
-
-        # Service not running — grab camera for live preview
         if cap is None or not cap.isOpened():
             cap = _open_stream_camera()
             if not cap.isOpened():
-                time.sleep(1.0)
+                # Show offline placeholder
+                placeholder = np.zeros((480, 640, 3), dtype=np.uint8)
+                cv2.putText(placeholder, "Camera unavailable",
+                            (160, 230), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 255), 2)
+                _, buf = cv2.imencode(".jpg", placeholder, [cv2.IMWRITE_JPEG_QUALITY, 70])
+                with _stream_lock:
+                    _stream_frame = buf.tobytes()
+                time.sleep(2.0)
                 continue
 
         ret, frame = cap.read()
         if not ret:
-            time.sleep(0.1)
+            cap.release()
+            cap = None
+            time.sleep(0.5)
             continue
 
         raw = _load_raw_config()
