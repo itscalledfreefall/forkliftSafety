@@ -14,21 +14,21 @@ model:
   path_openvino: "models/yolo26n_openvino_model/yolo26n.xml"  # OpenVINO IR XML path
   path_pt: "models/yolo26n.pt"                             # Ultralytics PT model path
   runtime: onnxruntime                                     # onnxruntime | openvino | ultralytics
-  input_size: 640
-  conf_threshold: 0.45
+  input_size: 512
+  conf_threshold: 0.50
   iou_threshold: 0.50
   person_class_id: 0
 
 alert:
   siren_wav: "assets/audio/danger.wav"
   voice_wav: "assets/audio/medium.wav"
-  close_area_ratio: 0.20            # bbox area ratio (danger if >= this)
-  medium_area_ratio: 0.08           # bbox area ratio (medium if >= this and < close)
-  min_alert_confidence: 0.60        # ignore low-confidence person detections
-  zone_hysteresis_ratio: 0.02       # stabilize zone switching near thresholds
-  distance_smoothing_alpha: 0.4     # EMA smoothing for bbox area ratio
-  always_announce_person: false     # only announce when zone thresholds are met
-  repeat_interval_sec: 0.75
+  close_area_ratio: 0.18
+  medium_area_ratio: 0.06
+  min_alert_confidence: 0.55
+  zone_hysteresis_ratio: 0.03
+  distance_smoothing_alpha: 0.30
+  always_announce_person: false
+  repeat_interval_sec: 1.5
   min_clear_sec: 3.0
 
 perf:
@@ -36,7 +36,7 @@ perf:
   capture_cpu_cores: [0]
   inference_cpu_cores: [1, 2, 3]
   inference_threads: 4
-  temporal_smoothing_frames: 3
+  temporal_smoothing_frames: 5
 
 logging:
   level: INFO
