@@ -62,6 +62,7 @@ class AlertWorker:
         self._thread: Optional[threading.Thread] = None
         self._siren_data = None
         self._voice_data = None
+        self._clip_map: dict[str, Optional[tuple[np.ndarray, int, int]]] = {}
         self._sd = None  # sounddevice module, lazy-loaded
         self._playback_count: int = 0
 
@@ -85,6 +86,10 @@ class AlertWorker:
         """Load WAV files into memory at startup."""
         self._siren_data = _load_wav(self._cfg.alert.siren_wav)
         self._voice_data = _load_wav(self._cfg.alert.voice_wav)
+        self._clip_map = {
+            "danger": self._siren_data,
+            "medium": self._voice_data,
+        }
 
     def _play_clip(self, clip_data) -> float:
         """Play a preloaded clip. Returns playback start time in ms since epoch."""
@@ -126,15 +131,14 @@ class AlertWorker:
                 continue
 
             logger.info(
-                "Alert triggered: reason={}, cooldown={}",
+                "Alert triggered: reason={}, cooldown={}, sound_key={}",
                 alert.trigger_reason,
                 alert.cooldown_active,
+                alert.sound_key,
             )
 
-            # Play siren then voice
-            start_ms = self._play_clip(self._siren_data)
-            if not self._stop.is_set():
-                self._play_clip(self._voice_data)
+            clip = self._clip_map.get(alert.sound_key) or self._siren_data
+            start_ms = self._play_clip(clip)
 
             alert.audio_started_ms = start_ms
             self._playback_count += 1

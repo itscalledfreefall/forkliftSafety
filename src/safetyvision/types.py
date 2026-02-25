@@ -28,6 +28,7 @@ class DetectionEvent:
     person_detected: bool
     confidence_max: float
     bbox_count: int
+    max_bbox_area_ratio: float = 0.0
     source_id: str = ""
 
 
@@ -38,6 +39,7 @@ class AlertEvent:
     timestamp_ns: int
     trigger_reason: str
     cooldown_active: bool
+    sound_key: str = "danger"
     audio_started_ms: float = 0.0
 
 

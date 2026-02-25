@@ -36,6 +36,8 @@ class ModelConfig:
 class AlertConfig:
     siren_wav: str = "assets/audio/siren.wav"
     voice_wav: str = "assets/audio/warning_voice.wav"
+    close_area_ratio: float = 0.20
+    medium_area_ratio: float = 0.08
     repeat_interval_sec: float = 5.0
     min_clear_sec: float = 3.0
 
@@ -138,5 +140,11 @@ def validate(cfg: SafetyVisionConfig) -> None:
         raise ConfigError("alert.repeat_interval_sec must be positive")
     if cfg.alert.min_clear_sec <= 0:
         raise ConfigError("alert.min_clear_sec must be positive")
+    if not 0.0 < cfg.alert.medium_area_ratio < 1.0:
+        raise ConfigError("alert.medium_area_ratio must be between 0 and 1")
+    if not 0.0 < cfg.alert.close_area_ratio < 1.0:
+        raise ConfigError("alert.close_area_ratio must be between 0 and 1")
+    if cfg.alert.close_area_ratio <= cfg.alert.medium_area_ratio:
+        raise ConfigError("alert.close_area_ratio must be greater than alert.medium_area_ratio")
     if cfg.perf.max_queue_size < 1:
         raise ConfigError("perf.max_queue_size must be >= 1")

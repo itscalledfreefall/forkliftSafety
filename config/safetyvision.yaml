@@ -22,6 +22,8 @@ model:
 alert:
   siren_wav: "assets/audio/danger.wav"
   voice_wav: "assets/audio/medium.wav"
+  close_area_ratio: 0.20            # bbox area ratio (danger if >= this)
+  medium_area_ratio: 0.08           # bbox area ratio (medium if >= this and < close)
   repeat_interval_sec: 5.0
   min_clear_sec: 3.0
 

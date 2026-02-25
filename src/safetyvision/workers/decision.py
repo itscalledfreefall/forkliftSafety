@@ -39,6 +39,7 @@ class DecisionWorker:
         self._last_trigger_ns: int = 0
         self._last_person_ns: int = 0
         self._alert_count: int = 0
+        self._last_sound_key: str = ""
 
     @property
     def state(self) -> AlertState:
@@ -64,30 +65,47 @@ class DecisionWorker:
         now_ns = event.timestamp_ns
         repeat_ns = int(self._cfg.alert.repeat_interval_sec * 1e9)
         clear_ns = int(self._cfg.alert.min_clear_sec * 1e9)
+        sound_key = self._classify_sound_key(event)
+        in_alert_zone = sound_key in ("danger", "medium")
 
-        if event.person_detected:
+        if in_alert_zone:
             self._last_person_ns = now_ns
 
         if self._state == AlertState.IDLE:
-            if event.person_detected:
+            if in_alert_zone:
                 self._state = AlertState.TRIGGERED
                 self._last_trigger_ns = now_ns
                 self._alert_count += 1
+                self._last_sound_key = sound_key
                 return AlertEvent(
                     timestamp_ns=now_ns,
                     trigger_reason="person_detected",
                     cooldown_active=False,
+                    sound_key=sound_key,
                 )
 
         elif self._state == AlertState.TRIGGERED:
-            if not event.person_detected:
+            if not in_alert_zone:
                 # Check if clear period elapsed
                 elapsed = now_ns - self._last_person_ns
                 if elapsed >= clear_ns:
                     self._state = AlertState.IDLE
+                    self._last_sound_key = ""
                     logger.info("Alert cleared after {:.1f}s of no person", elapsed / 1e9)
                     return None
             else:
+                # Person remains in alert zone – switch clip immediately if zone changed.
+                if sound_key != self._last_sound_key:
+                    self._last_sound_key = sound_key
+                    self._last_trigger_ns = now_ns
+                    self._alert_count += 1
+                    return AlertEvent(
+                        timestamp_ns=now_ns,
+                        trigger_reason="zone_changed",
+                        cooldown_active=False,
+                        sound_key=sound_key,
+                    )
+
                 # Person still present – check repeat interval
                 elapsed = now_ns - self._last_trigger_ns
                 if elapsed >= repeat_ns:
@@ -97,9 +115,22 @@ class DecisionWorker:
                         timestamp_ns=now_ns,
                         trigger_reason="repeat_while_present",
                         cooldown_active=True,
+                        sound_key=sound_key,
                     )
 
         return None
+
+    def _classify_sound_key(self, event: DetectionEvent) -> str:
+        """Map detection size to alert level."""
+        if not event.person_detected:
+            return ""
+
+        ratio = event.max_bbox_area_ratio
+        if ratio >= self._cfg.alert.close_area_ratio:
+            return "danger"
+        if ratio >= self._cfg.alert.medium_area_ratio:
+            return "medium"
+        return ""
 
     def _run(self) -> None:
         while not self._stop.is_set():

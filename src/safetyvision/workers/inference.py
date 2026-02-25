@@ -326,12 +326,19 @@ class InferenceWorker:
             raw_detected = len(dets) > 0
             smoothed = self._apply_temporal_smoothing(raw_detected)
             max_conf = max((d.confidence for d in dets), default=0.0)
+            frame_h, frame_w = pkt.frame.shape[:2]
+            frame_area = float(max(frame_h * frame_w, 1))
+            max_area_ratio = max(
+                (((d.x2 - d.x1) * (d.y2 - d.y1)) / frame_area for d in dets),
+                default=0.0,
+            )
 
             event = DetectionEvent(
                 timestamp_ns=pkt.timestamp_ns,
                 person_detected=smoothed,
                 confidence_max=max_conf,
                 bbox_count=len(dets),
+                max_bbox_area_ratio=max_area_ratio,
                 source_id=pkt.source_id,
             )
 
