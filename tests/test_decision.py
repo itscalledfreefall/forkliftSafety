@@ -14,49 +14,27 @@ def _make_event(
     person: bool,
     ts_ns: int = 0,
     conf: float = 0.8,
-    area_ratio: float = 0.20,
     zone_level: str = "",
-    zone_conf: float = 0.0,
 ) -> DetectionEvent:
     return DetectionEvent(
         timestamp_ns=ts_ns,
         person_detected=person,
         confidence_max=conf if person else 0.0,
         bbox_count=1 if person else 0,
-        max_bbox_area_ratio=area_ratio if person else 0.0,
         zone_level=zone_level if person else "",
-        zone_confidence_max=zone_conf if person else 0.0,
         source_id="test",
     )
 
 
 @pytest.fixture
 def worker():
-    cfg = SafetyVisionConfig()
-    cfg.alert.repeat_interval_sec = 5.0
-    cfg.alert.min_clear_sec = 3.0
-    cfg.alert.close_area_ratio = 0.20
-    cfg.alert.medium_area_ratio = 0.08
-    cfg.alert.min_alert_confidence = 0.60
-    cfg.alert.zone_hysteresis_ratio = 0.02
-    cfg.alert.distance_smoothing_alpha = 1.0
-    cfg.alert.always_announce_person = False
-    w = DecisionWorker(cfg, Queue(), Queue(), threading.Event())
-    return w
-
-
-@pytest.fixture
-def worker_zone():
+    """Decision worker with default band config (0.33/0.66 cut lines)."""
     cfg = SafetyVisionConfig()
     cfg.alert.repeat_interval_sec = 5.0
     cfg.alert.min_clear_sec = 3.0
     cfg.alert.min_alert_confidence = 0.60
-    cfg.alert.use_zone_polygons = True
-    cfg.alert.danger_zone_polygon = [[0.3, 0.5], [0.7, 0.5], [0.9, 1.0], [0.1, 1.0]]
-    cfg.alert.medium_zone_polygon = [[0.2, 0.4], [0.8, 0.4], [1.0, 1.0], [0.0, 1.0]]
     cfg.alert.always_announce_person = False
-    w = DecisionWorker(cfg, Queue(), Queue(), threading.Event())
-    return w
+    return DecisionWorker(cfg, Queue(), Queue(), threading.Event())
 
 
 class TestAlertStateMachine:
@@ -64,108 +42,83 @@ class TestAlertStateMachine:
         assert worker.state == AlertState.IDLE
 
     def test_no_alert_on_no_person(self, worker):
-        event = _make_event(person=False, ts_ns=1_000_000_000)
-        alert = worker.process_event(event)
+        alert = worker.process_event(_make_event(person=False, ts_ns=1_000_000_000))
         assert alert is None
         assert worker.state == AlertState.IDLE
 
-    def test_triggers_on_person(self, worker):
-        event = _make_event(person=True, ts_ns=1_000_000_000)
-        alert = worker.process_event(event)
+    def test_danger_zone_triggers(self, worker):
+        alert = worker.process_event(
+            _make_event(person=True, ts_ns=1_000_000_000, zone_level="danger")
+        )
         assert alert is not None
         assert alert.trigger_reason == "person_detected"
         assert alert.sound_key == "danger"
         assert worker.state == AlertState.TRIGGERED
 
-    def test_medium_zone_uses_medium_sound(self, worker):
-        event = _make_event(person=True, ts_ns=1_000_000_000, area_ratio=0.10)
-        alert = worker.process_event(event)
+    def test_medium_zone_triggers(self, worker):
+        alert = worker.process_event(
+            _make_event(person=True, ts_ns=1_000_000_000, zone_level="medium")
+        )
         assert alert is not None
         assert alert.sound_key == "medium"
 
-    def test_far_zone_does_not_trigger(self, worker):
-        event = _make_event(person=True, ts_ns=1_000_000_000, area_ratio=0.02)
-        alert = worker.process_event(event)
+    def test_green_zone_no_alert(self, worker):
+        """Person in green zone (zone_level='') => no alert."""
+        alert = worker.process_event(
+            _make_event(person=True, ts_ns=1_000_000_000, zone_level="")
+        )
+        assert alert is None
+        assert worker.state == AlertState.IDLE
+
+    def test_low_confidence_no_alert(self, worker):
+        """Person detected but below min_alert_confidence => no alert."""
+        alert = worker.process_event(
+            _make_event(person=True, ts_ns=1_000_000_000, conf=0.50, zone_level="danger")
+        )
         assert alert is None
         assert worker.state == AlertState.IDLE
 
     def test_no_repeat_before_interval(self, worker):
-        # Trigger
-        worker.process_event(_make_event(person=True, ts_ns=1_000_000_000))
+        worker.process_event(_make_event(person=True, ts_ns=1_000_000_000, zone_level="danger"))
         assert worker.state == AlertState.TRIGGERED
 
-        # Still person but before repeat interval (5s)
-        alert = worker.process_event(_make_event(person=True, ts_ns=3_000_000_000))
-        assert alert is None  # Not yet time to repeat
+        alert = worker.process_event(
+            _make_event(person=True, ts_ns=3_000_000_000, zone_level="danger")
+        )
+        assert alert is None  # throttled
 
     def test_repeats_after_interval(self, worker):
-        worker.process_event(_make_event(person=True, ts_ns=1_000_000_000))
-        # After 5s repeat interval
-        alert = worker.process_event(_make_event(person=True, ts_ns=6_500_000_000))
+        worker.process_event(_make_event(person=True, ts_ns=1_000_000_000, zone_level="danger"))
+
+        alert = worker.process_event(
+            _make_event(person=True, ts_ns=6_500_000_000, zone_level="danger")
+        )
         assert alert is not None
         assert alert.trigger_reason == "repeat_while_present"
         assert alert.cooldown_active is True
         assert alert.sound_key == "danger"
 
-    def test_zone_change_retriggers_with_new_sound(self, worker):
-        worker.process_event(_make_event(person=True, ts_ns=1_000_000_000, area_ratio=0.10))
-        alert = worker.process_event(_make_event(person=True, ts_ns=2_000_000_000, area_ratio=0.25))
-        assert alert is None
-
-    def test_low_confidence_does_not_trigger(self, worker):
-        event = _make_event(person=True, ts_ns=1_000_000_000, conf=0.50, area_ratio=0.25)
-        alert = worker.process_event(event)
-        assert alert is None
-        assert worker.state == AlertState.IDLE
-
-    def test_zone_mode_uses_zone_level(self, worker_zone):
-        event = _make_event(
-            person=True,
-            ts_ns=1_000_000_000,
-            zone_level="danger",
-            zone_conf=0.8,
-            area_ratio=0.01,  # ignored in zone mode
-        )
-        alert = worker_zone.process_event(event)
-        assert alert is not None
-        assert alert.sound_key == "danger"
-
-    def test_zone_mode_rejects_low_zone_confidence(self, worker_zone):
-        event = _make_event(
-            person=True,
-            ts_ns=1_000_000_000,
-            zone_level="medium",
-            zone_conf=0.40,
-            area_ratio=0.5,
-        )
-        alert = worker_zone.process_event(event)
-        assert alert is None
-        assert worker_zone.state == AlertState.IDLE
-
     def test_clears_after_min_clear(self, worker):
-        worker.process_event(_make_event(person=True, ts_ns=1_000_000_000))
+        worker.process_event(_make_event(person=True, ts_ns=1_000_000_000, zone_level="danger"))
         assert worker.state == AlertState.TRIGGERED
 
-        # Person gone, but not enough time
-        alert = worker.process_event(_make_event(person=False, ts_ns=2_000_000_000))
-        assert alert is None
-        # State stays TRIGGERED because min_clear_sec not met
+        # Person gone, not enough time
+        worker.process_event(_make_event(person=False, ts_ns=2_000_000_000))
+        assert worker.state == AlertState.TRIGGERED
 
-        # After min_clear_sec (3s from last person seen at 1s)
-        alert = worker.process_event(_make_event(person=False, ts_ns=5_000_000_000))
-        assert alert is None
+        # After min_clear_sec
+        worker.process_event(_make_event(person=False, ts_ns=5_000_000_000))
         assert worker.state == AlertState.IDLE
 
     def test_alert_count_increments(self, worker):
         assert worker.alert_count == 0
-        worker.process_event(_make_event(person=True, ts_ns=1_000_000_000))
+        worker.process_event(_make_event(person=True, ts_ns=1_000_000_000, zone_level="danger"))
         assert worker.alert_count == 1
-        worker.process_event(_make_event(person=True, ts_ns=7_000_000_000))
+        worker.process_event(_make_event(person=True, ts_ns=7_000_000_000, zone_level="danger"))
         assert worker.alert_count == 2
 
     def test_retrigger_after_clear(self, worker):
-        # Trigger
-        worker.process_event(_make_event(person=True, ts_ns=1_000_000_000))
+        worker.process_event(_make_event(person=True, ts_ns=1_000_000_000, zone_level="medium"))
         assert worker.state == AlertState.TRIGGERED
 
         # Clear
@@ -173,7 +126,65 @@ class TestAlertStateMachine:
         assert worker.state == AlertState.IDLE
 
         # New trigger
-        alert = worker.process_event(_make_event(person=True, ts_ns=10_000_000_000))
+        alert = worker.process_event(
+            _make_event(person=True, ts_ns=10_000_000_000, zone_level="danger")
+        )
         assert alert is not None
-        assert alert.trigger_reason == "person_detected"
+        assert alert.sound_key == "danger"
         assert worker.alert_count == 2
+
+
+class TestMultiPersonZones:
+    """Multi-person zone priority is resolved by inference worker.
+
+    These tests verify that the decision worker correctly maps the
+    already-resolved zone_level to the right sound key.
+    """
+
+    def test_danger_wins_over_medium(self, worker):
+        """Inference reports danger (any person in red) => danger sound."""
+        alert = worker.process_event(
+            _make_event(person=True, ts_ns=1_000_000_000, zone_level="danger")
+        )
+        assert alert is not None
+        assert alert.sound_key == "danger"
+
+    def test_medium_only(self, worker):
+        """All persons in yellow only => medium sound."""
+        alert = worker.process_event(
+            _make_event(person=True, ts_ns=1_000_000_000, zone_level="medium")
+        )
+        assert alert is not None
+        assert alert.sound_key == "medium"
+
+    def test_all_in_green(self, worker):
+        """All persons in green => no alert."""
+        alert = worker.process_event(
+            _make_event(person=True, ts_ns=1_000_000_000, zone_level="")
+        )
+        assert alert is None
+
+    def test_zone_switch_during_repeat(self, worker):
+        """Zone can change between repeats."""
+        worker.process_event(_make_event(person=True, ts_ns=1_000_000_000, zone_level="medium"))
+        assert worker.state == AlertState.TRIGGERED
+
+        # After repeat interval, now in danger
+        alert = worker.process_event(
+            _make_event(person=True, ts_ns=7_000_000_000, zone_level="danger")
+        )
+        assert alert is not None
+        assert alert.sound_key == "danger"
+
+    def test_person_moves_to_green_then_clears(self, worker):
+        """Person moves from red to green, eventually clears."""
+        worker.process_event(_make_event(person=True, ts_ns=1_000_000_000, zone_level="danger"))
+        assert worker.state == AlertState.TRIGGERED
+
+        # Person moves to green
+        worker.process_event(_make_event(person=True, ts_ns=2_000_000_000, zone_level=""))
+        assert worker.state == AlertState.TRIGGERED  # not yet cleared
+
+        # After min_clear_sec
+        worker.process_event(_make_event(person=False, ts_ns=5_000_000_000))
+        assert worker.state == AlertState.IDLE

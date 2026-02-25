@@ -22,15 +22,17 @@ class FramePacket:
 
 @dataclass(slots=True)
 class DetectionEvent:
-    """Output of inference + decision filtering."""
+    """Output of inference + zone classification.
+
+    zone_level is the highest-risk horizontal band any detected person's
+    footpoint falls into: "danger" | "medium" | "" (green / no person).
+    """
 
     timestamp_ns: int
     person_detected: bool
     confidence_max: float
     bbox_count: int
-    max_bbox_area_ratio: float = 0.0
-    zone_level: str = ""
-    zone_confidence_max: float = 0.0
+    zone_level: str = ""          # "danger" | "medium" | ""
     source_id: str = ""
 
 

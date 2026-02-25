@@ -1,6 +1,5 @@
 """Tests for configuration loading and validation."""
 
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -93,16 +92,30 @@ class TestValidation:
         with pytest.raises(ConfigError, match="repeat_interval"):
             validate(cfg)
 
-    def test_invalid_hysteresis_ratio(self):
+    def test_yellow_start_y_out_of_range(self):
         cfg = SafetyVisionConfig()
-        cfg.alert.zone_hysteresis_ratio = 0.7
-        with pytest.raises(ConfigError, match="zone_hysteresis_ratio"):
+        cfg.alert.yellow_start_y = 0.0
+        with pytest.raises(ConfigError, match="yellow_start_y"):
             validate(cfg)
 
-    def test_invalid_smoothing_alpha(self):
+    def test_red_start_y_out_of_range(self):
         cfg = SafetyVisionConfig()
-        cfg.alert.distance_smoothing_alpha = 0
-        with pytest.raises(ConfigError, match="distance_smoothing_alpha"):
+        cfg.alert.red_start_y = 1.0
+        with pytest.raises(ConfigError, match="red_start_y"):
+            validate(cfg)
+
+    def test_yellow_must_be_less_than_red(self):
+        cfg = SafetyVisionConfig()
+        cfg.alert.yellow_start_y = 0.70
+        cfg.alert.red_start_y = 0.50
+        with pytest.raises(ConfigError, match="yellow_start_y.*less than.*red_start_y"):
+            validate(cfg)
+
+    def test_equal_cut_lines_invalid(self):
+        cfg = SafetyVisionConfig()
+        cfg.alert.yellow_start_y = 0.50
+        cfg.alert.red_start_y = 0.50
+        with pytest.raises(ConfigError, match="yellow_start_y"):
             validate(cfg)
 
     def test_invalid_min_alert_confidence(self):
@@ -111,20 +124,12 @@ class TestValidation:
         with pytest.raises(ConfigError, match="min_alert_confidence"):
             validate(cfg)
 
-    def test_zone_polygons_require_points_when_enabled(self):
-        cfg = SafetyVisionConfig()
-        cfg.alert.use_zone_polygons = True
-        cfg.alert.danger_zone_polygon = []
-        cfg.alert.medium_zone_polygon = []
-        with pytest.raises(ConfigError, match="use_zone_polygons"):
-            validate(cfg)
-
-    def test_invalid_zone_polygon_point(self):
-        cfg = SafetyVisionConfig()
-        cfg.alert.danger_zone_polygon = [[0.1, 0.2], [0.3], [0.5, 0.6]]
-        with pytest.raises(ConfigError, match="danger_zone_polygon"):
-            validate(cfg)
-
     def test_valid_config_passes(self):
         cfg = SafetyVisionConfig()
+        validate(cfg)  # should not raise
+
+    def test_custom_band_lines(self):
+        cfg = SafetyVisionConfig()
+        cfg.alert.yellow_start_y = 0.40
+        cfg.alert.red_start_y = 0.75
         validate(cfg)  # should not raise

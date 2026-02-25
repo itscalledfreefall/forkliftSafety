@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SafetyVision - Login</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body class="login-body">
+  <div class="login-card">
+    <h1>SafetyVision</h1>
+    <p class="subtitle">Forklift Safety System</p>
+    <form id="loginForm">
+      <input type="text" id="username" placeholder="Username" autocomplete="username" required>
+      <input type="password" id="password" placeholder="Password" autocomplete="current-password" required>
+      <button type="submit">Log In</button>
+      <div id="loginError" class="error" style="display:none"></div>
+    </form>
+  </div>
+  <script>
+    document.getElementById('loginForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const err = document.getElementById('loginError');
+      err.style.display = 'none';
+      try {
+        const res = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            username: document.getElementById('username').value,
+            password: document.getElementById('password').value,
+          }),
+        });
+        if (res.ok) {
+          window.location.href = '/';
+        } else {
+          const data = await res.json();
+          err.textContent = data.detail || 'Login failed';
+          err.style.display = 'block';
+        }
+      } catch(e) {
+        err.textContent = 'Connection error';
+        err.style.display = 'block';
+      }
+    });
+  </script>
+</body>
+</html>

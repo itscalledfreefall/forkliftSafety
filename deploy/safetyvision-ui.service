@@ -1,0 +1,24 @@
+[Unit]
+Description=SafetyVision Web UI
+After=network.target safetyvision.service
+Wants=network.target
+
+[Service]
+Type=simple
+User=safetyvision
+Group=safetyvision
+SupplementaryGroups=audio video
+WorkingDirectory=/opt/safetyvision
+ExecStart=/opt/safetyvision/.venv/bin/python -m safetyvision.web.app --host 0.0.0.0 --port 8080 -c /opt/safetyvision/config/safetyvision.yaml
+Restart=always
+RestartSec=3
+LimitNOFILE=4096
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=safetyvision-ui
+Environment=SAFETYVISION_CONFIG=/opt/safetyvision/config/safetyvision.yaml
+Environment=SAFETYVISION_UI_USER=admin
+Environment=SAFETYVISION_UI_PASS=safetyvision
+
+[Install]
+WantedBy=multi-user.target

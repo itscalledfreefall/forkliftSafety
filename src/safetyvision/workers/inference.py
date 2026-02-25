@@ -77,40 +77,26 @@ def _compute_iou(a: Detection, b: Detection) -> float:
     return inter / union if union > 0 else 0.0
 
 
-def _point_in_polygon(x: float, y: float, polygon: list[list[float]]) -> bool:
-    """Ray-casting point-in-polygon test for normalized coordinates."""
-    if len(polygon) < 3:
-        return False
-    inside = False
-    j = len(polygon) - 1
-    for i in range(len(polygon)):
-        xi, yi = polygon[i]
-        xj, yj = polygon[j]
-        intersects = ((yi > y) != (yj > y)) and (
-            x < (xj - xi) * (y - yi) / ((yj - yi) + 1e-12) + xi
-        )
-        if intersects:
-            inside = not inside
-        j = i
-    return inside
-
-
 def _classify_detection_zone(
     det: Detection,
-    frame_w: int,
     frame_h: int,
     cfg: SafetyVisionConfig,
 ) -> str:
-    """Classify detection into configured danger/medium polygons."""
-    if not cfg.alert.use_zone_polygons or frame_w <= 0 or frame_h <= 0:
+    """Classify a detection into a horizontal band zone by footpoint Y.
+
+    Bands (top-to-bottom):
+        0.0  .. yellow_start_y  = green  (no sound)
+        yellow_start_y .. red_start_y = medium (yellow sound)
+        red_start_y .. 1.0      = danger (red sound)
+    """
+    if frame_h <= 0:
         return ""
-    x = ((det.x1 + det.x2) * 0.5) / frame_w
-    y = det.y2 / frame_h  # foot point is more stable for floor-risk zones
-    x = float(min(max(x, 0.0), 1.0))
-    y = float(min(max(y, 0.0), 1.0))
-    if _point_in_polygon(x, y, cfg.alert.danger_zone_polygon):
+    foot_y = float(det.y2) / frame_h
+    foot_y = min(max(foot_y, 0.0), 1.0)
+
+    if foot_y >= cfg.alert.red_start_y:
         return "danger"
-    if _point_in_polygon(x, y, cfg.alert.medium_zone_polygon):
+    if foot_y >= cfg.alert.yellow_start_y:
         return "medium"
     return ""
 
@@ -364,33 +350,24 @@ class InferenceWorker:
             raw_detected = len(dets) > 0
             smoothed = self._apply_temporal_smoothing(raw_detected)
             max_conf = max((d.confidence for d in dets), default=0.0)
-            frame_h, frame_w = pkt.frame.shape[:2]
-            frame_area = float(max(frame_h * frame_w, 1))
-            max_area_ratio = max(
-                (((d.x2 - d.x1) * (d.y2 - d.y1)) / frame_area for d in dets),
-                default=0.0,
-            )
+            frame_h = pkt.frame.shape[0]
+
+            # Multi-person: highest-risk band wins (danger > medium > green)
             zone_level = ""
-            zone_conf_max = 0.0
             for d in dets:
-                zone = _classify_detection_zone(d, frame_w, frame_h, self._cfg)
+                zone = _classify_detection_zone(d, frame_h, self._cfg)
                 if zone == "danger":
-                    if zone_level != "danger" or d.confidence > zone_conf_max:
-                        zone_level = "danger"
-                        zone_conf_max = d.confidence
-                elif zone == "medium" and zone_level != "danger":
-                    if zone_level != "medium" or d.confidence > zone_conf_max:
-                        zone_level = "medium"
-                        zone_conf_max = d.confidence
+                    zone_level = "danger"
+                    break  # can't get higher
+                if zone == "medium":
+                    zone_level = "medium"
 
             event = DetectionEvent(
                 timestamp_ns=pkt.timestamp_ns,
                 person_detected=smoothed,
                 confidence_max=max_conf,
                 bbox_count=len(dets),
-                max_bbox_area_ratio=max_area_ratio,
                 zone_level=zone_level,
-                zone_confidence_max=zone_conf_max,
                 source_id=pkt.source_id,
             )
 

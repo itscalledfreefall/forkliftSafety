@@ -1,4 +1,4 @@
-"""Decision worker – alert state machine with debounce and hysteresis."""
+"""Decision worker – alert state machine with horizontal band zones."""
 
 from __future__ import annotations
 
@@ -14,7 +14,12 @@ from safetyvision.types import AlertEvent, AlertState, DetectionEvent
 
 
 class DecisionWorker:
-    """Consumes DetectionEvents and produces AlertEvents based on state machine."""
+    """Consumes DetectionEvents and produces AlertEvents based on state machine.
+
+    Zone classification (green/yellow/red) is already resolved by inference
+    worker into ``event.zone_level``.  This worker only manages the alert
+    state machine: trigger, repeat-throttle, and clear.
+    """
 
     def __init__(
         self,
@@ -39,8 +44,6 @@ class DecisionWorker:
         self._last_trigger_ns: int = 0
         self._last_person_ns: int = 0
         self._alert_count: int = 0
-        self._last_sound_key: str = ""
-        self._smoothed_area_ratio: float = 0.0
 
     @property
     def state(self) -> AlertState:
@@ -66,7 +69,7 @@ class DecisionWorker:
         now_ns = event.timestamp_ns
         repeat_ns = int(self._cfg.alert.repeat_interval_sec * 1e9)
         clear_ns = int(self._cfg.alert.min_clear_sec * 1e9)
-        self._update_area_ratio(event)
+
         sound_key = self._classify_sound_key(event)
         in_alert_zone = sound_key in ("danger", "medium")
 
@@ -78,7 +81,6 @@ class DecisionWorker:
                 self._state = AlertState.TRIGGERED
                 self._last_trigger_ns = now_ns
                 self._alert_count += 1
-                self._last_sound_key = sound_key
                 return AlertEvent(
                     timestamp_ns=now_ns,
                     trigger_reason="person_detected",
@@ -88,18 +90,13 @@ class DecisionWorker:
 
         elif self._state == AlertState.TRIGGERED:
             if not in_alert_zone:
-                # Check if clear period elapsed
                 elapsed = now_ns - self._last_person_ns
                 if elapsed >= clear_ns:
                     self._state = AlertState.IDLE
-                    self._last_sound_key = ""
                     logger.info("Alert cleared after {:.1f}s of no person", elapsed / 1e9)
                     return None
             else:
-                # Person remains in alert zone – switch clip immediately if zone changed.
-                self._last_sound_key = sound_key
-
-                # Person still present – check repeat interval
+                # Person still in alert zone – check repeat interval
                 elapsed = now_ns - self._last_trigger_ns
                 if elapsed >= repeat_ns:
                     self._last_trigger_ns = now_ns
@@ -113,55 +110,17 @@ class DecisionWorker:
 
         return None
 
-    def _update_area_ratio(self, event: DetectionEvent) -> None:
-        """Smooth bbox area ratio to reduce near-threshold zone jitter."""
-        if not event.person_detected:
-            return
-        alpha = self._cfg.alert.distance_smoothing_alpha
-        self._smoothed_area_ratio = (
-            alpha * event.max_bbox_area_ratio + (1.0 - alpha) * self._smoothed_area_ratio
-        )
-
     def _classify_sound_key(self, event: DetectionEvent) -> str:
-        """Map detection size to alert level."""
+        """Map zone_level to sound key with confidence gate."""
         if not event.person_detected:
             return ""
-
-        if self._cfg.alert.use_zone_polygons:
-            if event.zone_level not in ("danger", "medium"):
-                return "medium" if self._cfg.alert.always_announce_person else ""
-            if event.zone_confidence_max < self._cfg.alert.min_alert_confidence:
-                return ""
-            return event.zone_level
-
         if event.confidence_max < self._cfg.alert.min_alert_confidence:
             return ""
-        ratio = self._smoothed_area_ratio
-        h = self._cfg.alert.zone_hysteresis_ratio
-        danger_enter = self._cfg.alert.close_area_ratio + h
-        danger_exit = max(self._cfg.alert.close_area_ratio - h, 0.0)
-        medium_enter = self._cfg.alert.medium_area_ratio + h
-        medium_exit = max(self._cfg.alert.medium_area_ratio - h, 0.0)
-
-        if self._last_sound_key == "danger":
-            if ratio >= danger_exit:
-                return "danger"
-            if ratio >= medium_exit:
-                return "medium"
-            return "medium" if self._cfg.alert.always_announce_person else ""
-
-        if self._last_sound_key == "medium":
-            if ratio >= danger_enter:
-                return "danger"
-            if ratio >= medium_exit:
-                return "medium"
-            return "medium" if self._cfg.alert.always_announce_person else ""
-
-        # First entry uses configured threshold directly; hysteresis applies after entry.
-        if ratio >= self._cfg.alert.close_area_ratio:
+        if event.zone_level == "danger":
             return "danger"
-        if ratio >= self._cfg.alert.medium_area_ratio:
+        if event.zone_level == "medium":
             return "medium"
+        # Green zone or no zone → silent
         return "medium" if self._cfg.alert.always_announce_person else ""
 
     def _run(self) -> None:

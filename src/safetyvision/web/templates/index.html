@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SafetyVision Control Panel</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+  <header>
+    <h1>SafetyVision</h1>
+    <div class="header-right">
+      <span id="serviceStatus" class="status-badge">--</span>
+      <button id="logoutBtn" class="btn-small">Logout</button>
+    </div>
+  </header>
+
+  <main>
+    <!-- Tabs -->
+    <nav class="tabs">
+      <button class="tab active" data-tab="dashboard">Dashboard</button>
+      <button class="tab" data-tab="zones">Zone Settings</button>
+      <button class="tab" data-tab="timing">Audio / Timing</button>
+    </nav>
+
+    <!-- Dashboard Tab -->
+    <section id="tab-dashboard" class="tab-content active">
+      <div class="stream-container">
+        <img id="liveStream" src="" alt="Live Feed">
+        <div id="streamOffline" class="stream-offline">Stream offline</div>
+      </div>
+    </section>
+
+    <!-- Zone Settings Tab -->
+    <section id="tab-zones" class="tab-content">
+      <h2>Zone Cut Lines</h2>
+      <p class="help-text">Adjust the horizontal boundaries between green (safe), yellow (medium alert), and red (danger alert) zones.</p>
+
+      <div class="zone-editor">
+        <div class="zone-preview" id="zonePreview">
+          <div class="zone-band green-band" id="greenBand"></div>
+          <div class="zone-line yellow-line" id="yellowLine">
+            <span class="zone-label">YELLOW</span>
+          </div>
+          <div class="zone-band yellow-band" id="yellowBand"></div>
+          <div class="zone-line red-line" id="redLine">
+            <span class="zone-label">RED</span>
+          </div>
+          <div class="zone-band red-band" id="redBand"></div>
+        </div>
+
+        <div class="zone-controls">
+          <div class="slider-group">
+            <label>Yellow Start Y: <strong id="yellowVal">0.33</strong></label>
+            <input type="range" id="yellowSlider" min="0.05" max="0.95" step="0.01" value="0.33">
+          </div>
+          <div class="slider-group">
+            <label>Red Start Y: <strong id="redVal">0.66</strong></label>
+            <input type="range" id="redSlider" min="0.05" max="0.95" step="0.01" value="0.66">
+          </div>
+          <button id="saveZonesBtn" class="btn-primary">Save Zones</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Timing Tab -->
+    <section id="tab-timing" class="tab-content">
+      <h2>Alert Timing</h2>
+      <div class="form-grid">
+        <div class="form-group">
+          <label>Repeat Interval (sec)</label>
+          <input type="number" id="repeatInterval" step="0.1" min="0.1" value="1.5">
+        </div>
+        <div class="form-group">
+          <label>Min Clear Time (sec)</label>
+          <input type="number" id="minClear" step="0.1" min="0.1" value="3.0">
+        </div>
+        <div class="form-group">
+          <label>Min Alert Confidence</label>
+          <input type="number" id="minConfidence" step="0.01" min="0.01" max="0.99" value="0.55">
+        </div>
+      </div>
+      <button id="saveTimingBtn" class="btn-primary">Save Timing</button>
+    </section>
+
+    <!-- Apply Bar -->
+    <div class="apply-bar">
+      <button id="validateBtn" class="btn-secondary">Validate Config</button>
+      <button id="applyBtn" class="btn-danger">Apply &amp; Restart</button>
+      <button id="restoreBtn" class="btn-secondary">Restore Previous</button>
+      <span id="applyStatus" class="apply-status"></span>
+    </div>
+  </main>
+
+  <!-- Confirm Modal -->
+  <div id="confirmModal" class="modal" style="display:none">
+    <div class="modal-content">
+      <h3>Confirm Apply</h3>
+      <p>This will save the current config and restart the SafetyVision service. Continue?</p>
+      <div class="modal-actions">
+        <button id="confirmApply" class="btn-danger">Apply &amp; Restart</button>
+        <button id="cancelApply" class="btn-secondary">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div id="toast" class="toast"></div>
+
+  <script src="/static/js/app.js"></script>
+</body>
+</html>

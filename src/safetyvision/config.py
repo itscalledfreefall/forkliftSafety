@@ -36,14 +36,13 @@ class ModelConfig:
 class AlertConfig:
     siren_wav: str = "assets/audio/siren.wav"
     voice_wav: str = "assets/audio/warning_voice.wav"
-    use_zone_polygons: bool = False
-    danger_zone_polygon: List[List[float]] = field(default_factory=list)
-    medium_zone_polygon: List[List[float]] = field(default_factory=list)
-    close_area_ratio: float = 0.20
-    medium_area_ratio: float = 0.08
+    # Horizontal band zone cut lines (normalized Y, 0=top, 1=bottom).
+    # 0.0 .. yellow_start_y  = green  (no sound)
+    # yellow_start_y .. red_start_y = yellow (medium sound)
+    # red_start_y .. 1.0     = red    (danger sound)
+    yellow_start_y: float = 0.33
+    red_start_y: float = 0.66
     min_alert_confidence: float = 0.60
-    zone_hysteresis_ratio: float = 0.02
-    distance_smoothing_alpha: float = 0.4
     always_announce_person: bool = False
     repeat_interval_sec: float = 0.75
     min_clear_sec: float = 3.0
@@ -120,19 +119,6 @@ class ConfigError(ValueError):
     """Raised for invalid configuration."""
 
 
-def _validate_polygon(name: str, polygon: List[List[float]]) -> None:
-    if not polygon:
-        return
-    if len(polygon) < 3:
-        raise ConfigError(f"alert.{name} must contain at least 3 points")
-    for idx, pt in enumerate(polygon):
-        if not isinstance(pt, list) or len(pt) != 2:
-            raise ConfigError(f"alert.{name}[{idx}] must be [x, y]")
-        x, y = pt
-        if not (0.0 <= float(x) <= 1.0 and 0.0 <= float(y) <= 1.0):
-            raise ConfigError(f"alert.{name}[{idx}] coordinates must be normalized between 0 and 1")
-
-
 def validate(cfg: SafetyVisionConfig) -> None:
     """Raise ConfigError on invalid values."""
     if cfg.input.mode not in ("rtsp", "usb"):
@@ -156,30 +142,20 @@ def validate(cfg: SafetyVisionConfig) -> None:
         raise ConfigError("model.conf_threshold must be between 0 and 1")
     if not 0.0 < cfg.model.iou_threshold < 1.0:
         raise ConfigError("model.iou_threshold must be between 0 and 1")
+    # Zone band cut lines
+    if not 0.0 < cfg.alert.yellow_start_y < 1.0:
+        raise ConfigError("alert.yellow_start_y must be between 0 and 1")
+    if not 0.0 < cfg.alert.red_start_y < 1.0:
+        raise ConfigError("alert.red_start_y must be between 0 and 1")
+    if cfg.alert.yellow_start_y >= cfg.alert.red_start_y:
+        raise ConfigError(
+            "alert.yellow_start_y must be less than alert.red_start_y"
+        )
+    if not 0.0 < cfg.alert.min_alert_confidence < 1.0:
+        raise ConfigError("alert.min_alert_confidence must be between 0 and 1")
     if cfg.alert.repeat_interval_sec <= 0:
         raise ConfigError("alert.repeat_interval_sec must be positive")
     if cfg.alert.min_clear_sec <= 0:
         raise ConfigError("alert.min_clear_sec must be positive")
-    if not 0.0 < cfg.alert.medium_area_ratio < 1.0:
-        raise ConfigError("alert.medium_area_ratio must be between 0 and 1")
-    if not 0.0 < cfg.alert.close_area_ratio < 1.0:
-        raise ConfigError("alert.close_area_ratio must be between 0 and 1")
-    if cfg.alert.close_area_ratio <= cfg.alert.medium_area_ratio:
-        raise ConfigError("alert.close_area_ratio must be greater than alert.medium_area_ratio")
-    if not 0.0 < cfg.alert.min_alert_confidence < 1.0:
-        raise ConfigError("alert.min_alert_confidence must be between 0 and 1")
-    if not 0.0 <= cfg.alert.zone_hysteresis_ratio < 0.5:
-        raise ConfigError("alert.zone_hysteresis_ratio must be between 0 and 0.5")
-    if not 0.0 < cfg.alert.distance_smoothing_alpha <= 1.0:
-        raise ConfigError("alert.distance_smoothing_alpha must be between 0 and 1")
-    _validate_polygon("danger_zone_polygon", cfg.alert.danger_zone_polygon)
-    _validate_polygon("medium_zone_polygon", cfg.alert.medium_zone_polygon)
-    if cfg.alert.use_zone_polygons:
-        has_danger = len(cfg.alert.danger_zone_polygon) >= 3
-        has_medium = len(cfg.alert.medium_zone_polygon) >= 3
-        if not (has_danger or has_medium):
-            raise ConfigError(
-                "alert.use_zone_polygons is true, but no valid zone polygons are configured"
-            )
     if cfg.perf.max_queue_size < 1:
         raise ConfigError("perf.max_queue_size must be >= 1")

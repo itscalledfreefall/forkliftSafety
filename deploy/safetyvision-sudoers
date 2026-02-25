@@ -1,0 +1,4 @@
+# Allow safetyvision user to restart/status the safety service without password
+safetyvision ALL=(root) NOPASSWD: /usr/bin/systemctl restart safetyvision
+safetyvision ALL=(root) NOPASSWD: /usr/bin/systemctl status safetyvision
+safetyvision ALL=(root) NOPASSWD: /usr/bin/systemctl is-active safetyvision
