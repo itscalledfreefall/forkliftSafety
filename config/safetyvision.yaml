@@ -30,7 +30,7 @@ alert:
   red_start_y: 0.66
   min_alert_confidence: 0.55
   always_announce_person: false
-  repeat_interval_sec: 1.5
+  repeat_interval_sec: 3.0
   min_clear_sec: 3.0
 
 perf:
