@@ -245,27 +245,38 @@ _stream_thread: Optional[threading.Thread] = None
 
 
 def _open_stream_camera() -> cv2.VideoCapture:
-    """Open camera for the stream using the same auto/usb/rtsp logic."""
+    """Open camera for the web UI live view.
+
+    Uses the main stream (rtsp_url_main) for higher resolution preview.
+    Falls back to sub stream (rtsp_url) or USB if main stream unavailable.
+    """
     raw = _load_raw_config()
     inp = raw.get("input", {})
     mode = inp.get("mode", "usb")
     dev = inp.get("usb_device", "/dev/video0")
-    rtsp = inp.get("rtsp_url", "")
+    rtsp_main = inp.get("rtsp_url_main", "")
+    rtsp_sub = inp.get("rtsp_url", "")
 
-    cap = None
-    if mode in ("usb", "auto"):
-        if os.path.exists(dev):
-            cap = cv2.VideoCapture(dev, cv2.CAP_V4L2)
-            cap.set(cv2.CAP_PROP_FRAME_WIDTH, inp.get("width", 640))
-            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, inp.get("height", 480))
-            cap.set(cv2.CAP_PROP_FPS, inp.get("fps", 30))
-            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-            if cap.isOpened():
-                return cap
-            cap.release()
+    # For RTSP: prefer main stream for live view
+    if mode in ("rtsp", "auto") and rtsp_main:
+        cap = cv2.VideoCapture(rtsp_main)
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        if cap.isOpened():
+            return cap
 
-    if mode in ("rtsp", "auto") and rtsp:
-        cap = cv2.VideoCapture(rtsp)
+    # Fallback to sub stream
+    if mode in ("rtsp", "auto") and rtsp_sub:
+        cap = cv2.VideoCapture(rtsp_sub)
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        if cap.isOpened():
+            return cap
+
+    # USB
+    if mode in ("usb", "auto") and os.path.exists(dev):
+        cap = cv2.VideoCapture(dev, cv2.CAP_V4L2)
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, inp.get("width", 640))
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, inp.get("height", 480))
+        cap.set(cv2.CAP_PROP_FPS, inp.get("fps", 25))
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         if cap.isOpened():
             return cap

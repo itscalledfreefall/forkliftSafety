@@ -13,11 +13,12 @@ import yaml
 @dataclass
 class InputConfig:
     mode: str = "usb"
-    rtsp_url: str = ""
+    rtsp_url: str = ""           # sub stream for detection
+    rtsp_url_main: str = ""      # main stream for web UI live view
     usb_device: str = "/dev/video0"
     width: int = 640
     height: int = 480
-    fps: int = 30
+    fps: int = 25
 
 
 @dataclass
