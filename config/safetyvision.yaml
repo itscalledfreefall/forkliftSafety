@@ -24,7 +24,10 @@ alert:
   voice_wav: "assets/audio/medium.wav"
   close_area_ratio: 0.20            # bbox area ratio (danger if >= this)
   medium_area_ratio: 0.08           # bbox area ratio (medium if >= this and < close)
-  repeat_interval_sec: 5.0
+  zone_hysteresis_ratio: 0.02       # stabilize zone switching near thresholds
+  distance_smoothing_alpha: 0.4     # EMA smoothing for bbox area ratio
+  always_announce_person: true      # if person is detected, at least medium is announced
+  repeat_interval_sec: 0.75
   min_clear_sec: 3.0
 
 perf:

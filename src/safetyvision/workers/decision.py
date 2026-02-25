@@ -40,6 +40,7 @@ class DecisionWorker:
         self._last_person_ns: int = 0
         self._alert_count: int = 0
         self._last_sound_key: str = ""
+        self._smoothed_area_ratio: float = 0.0
 
     @property
     def state(self) -> AlertState:
@@ -65,6 +66,7 @@ class DecisionWorker:
         now_ns = event.timestamp_ns
         repeat_ns = int(self._cfg.alert.repeat_interval_sec * 1e9)
         clear_ns = int(self._cfg.alert.min_clear_sec * 1e9)
+        self._update_area_ratio(event)
         sound_key = self._classify_sound_key(event)
         in_alert_zone = sound_key in ("danger", "medium")
 
@@ -95,16 +97,7 @@ class DecisionWorker:
                     return None
             else:
                 # Person remains in alert zone – switch clip immediately if zone changed.
-                if sound_key != self._last_sound_key:
-                    self._last_sound_key = sound_key
-                    self._last_trigger_ns = now_ns
-                    self._alert_count += 1
-                    return AlertEvent(
-                        timestamp_ns=now_ns,
-                        trigger_reason="zone_changed",
-                        cooldown_active=False,
-                        sound_key=sound_key,
-                    )
+                self._last_sound_key = sound_key
 
                 # Person still present – check repeat interval
                 elapsed = now_ns - self._last_trigger_ns
@@ -120,17 +113,46 @@ class DecisionWorker:
 
         return None
 
+    def _update_area_ratio(self, event: DetectionEvent) -> None:
+        """Smooth bbox area ratio to reduce near-threshold zone jitter."""
+        if not event.person_detected:
+            return
+        alpha = self._cfg.alert.distance_smoothing_alpha
+        self._smoothed_area_ratio = (
+            alpha * event.max_bbox_area_ratio + (1.0 - alpha) * self._smoothed_area_ratio
+        )
+
     def _classify_sound_key(self, event: DetectionEvent) -> str:
         """Map detection size to alert level."""
         if not event.person_detected:
             return ""
+        ratio = self._smoothed_area_ratio
+        h = self._cfg.alert.zone_hysteresis_ratio
+        danger_enter = self._cfg.alert.close_area_ratio + h
+        danger_exit = max(self._cfg.alert.close_area_ratio - h, 0.0)
+        medium_enter = self._cfg.alert.medium_area_ratio + h
+        medium_exit = max(self._cfg.alert.medium_area_ratio - h, 0.0)
 
-        ratio = event.max_bbox_area_ratio
+        if self._last_sound_key == "danger":
+            if ratio >= danger_exit:
+                return "danger"
+            if ratio >= medium_exit:
+                return "medium"
+            return "medium" if self._cfg.alert.always_announce_person else ""
+
+        if self._last_sound_key == "medium":
+            if ratio >= danger_enter:
+                return "danger"
+            if ratio >= medium_exit:
+                return "medium"
+            return "medium" if self._cfg.alert.always_announce_person else ""
+
+        # First entry uses configured threshold directly; hysteresis applies after entry.
         if ratio >= self._cfg.alert.close_area_ratio:
             return "danger"
         if ratio >= self._cfg.alert.medium_area_ratio:
             return "medium"
-        return ""
+        return "medium" if self._cfg.alert.always_announce_person else ""
 
     def _run(self) -> None:
         while not self._stop.is_set():

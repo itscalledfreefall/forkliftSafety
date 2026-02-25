@@ -93,6 +93,18 @@ class TestValidation:
         with pytest.raises(ConfigError, match="repeat_interval"):
             validate(cfg)
 
+    def test_invalid_hysteresis_ratio(self):
+        cfg = SafetyVisionConfig()
+        cfg.alert.zone_hysteresis_ratio = 0.7
+        with pytest.raises(ConfigError, match="zone_hysteresis_ratio"):
+            validate(cfg)
+
+    def test_invalid_smoothing_alpha(self):
+        cfg = SafetyVisionConfig()
+        cfg.alert.distance_smoothing_alpha = 0
+        with pytest.raises(ConfigError, match="distance_smoothing_alpha"):
+            validate(cfg)
+
     def test_valid_config_passes(self):
         cfg = SafetyVisionConfig()
         validate(cfg)  # should not raise

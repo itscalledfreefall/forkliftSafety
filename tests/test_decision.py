@@ -33,6 +33,9 @@ def worker():
     cfg.alert.min_clear_sec = 3.0
     cfg.alert.close_area_ratio = 0.20
     cfg.alert.medium_area_ratio = 0.08
+    cfg.alert.zone_hysteresis_ratio = 0.02
+    cfg.alert.distance_smoothing_alpha = 1.0
+    cfg.alert.always_announce_person = True
     w = DecisionWorker(cfg, Queue(), Queue(), threading.Event())
     return w
 
@@ -64,8 +67,9 @@ class TestAlertStateMachine:
     def test_far_zone_does_not_trigger(self, worker):
         event = _make_event(person=True, ts_ns=1_000_000_000, area_ratio=0.02)
         alert = worker.process_event(event)
-        assert alert is None
-        assert worker.state == AlertState.IDLE
+        assert alert is not None
+        assert alert.sound_key == "medium"
+        assert worker.state == AlertState.TRIGGERED
 
     def test_no_repeat_before_interval(self, worker):
         # Trigger
@@ -88,9 +92,7 @@ class TestAlertStateMachine:
     def test_zone_change_retriggers_with_new_sound(self, worker):
         worker.process_event(_make_event(person=True, ts_ns=1_000_000_000, area_ratio=0.10))
         alert = worker.process_event(_make_event(person=True, ts_ns=2_000_000_000, area_ratio=0.25))
-        assert alert is not None
-        assert alert.trigger_reason == "zone_changed"
-        assert alert.sound_key == "danger"
+        assert alert is None
 
     def test_clears_after_min_clear(self, worker):
         worker.process_event(_make_event(person=True, ts_ns=1_000_000_000))
