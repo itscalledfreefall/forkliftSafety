@@ -55,6 +55,12 @@ ADMIN_PASS_HASH = hashlib.sha256(
 _last_apply_ts: float = 0.0
 APPLY_COOLDOWN = 5.0  # seconds
 
+# Web preview tuning (override via env if needed)
+WEB_RTSP_TRANSPORT = os.environ.get("SAFETYVISION_WEB_RTSP_TRANSPORT", "tcp").lower()
+WEB_PREVIEW_WIDTH = int(os.environ.get("SAFETYVISION_WEB_PREVIEW_WIDTH", "960"))
+WEB_PREVIEW_FPS = float(os.environ.get("SAFETYVISION_WEB_PREVIEW_FPS", "12"))
+WEB_JPEG_QUALITY = int(os.environ.get("SAFETYVISION_WEB_JPEG_QUALITY", "45"))
+
 
 # ---------------------------------------------------------------------------
 # Auth helpers
@@ -256,30 +262,38 @@ def _open_stream_camera() -> cv2.VideoCapture:
     dev = inp.get("usb_device", "/dev/video0")
     rtsp_main = inp.get("rtsp_url_main", "")
     rtsp_sub = inp.get("rtsp_url", "")
+    width = int(inp.get("width", 640))
+    height = int(inp.get("height", 480))
+    fps = int(inp.get("fps", 25))
 
-    # For RTSP: prefer main stream, use UDP + low-latency flags
+    # For RTSP: prefer main stream, then sub stream.
     for url in ([rtsp_main, rtsp_sub] if mode in ("rtsp", "auto") else []):
         if not url:
             continue
-        # Try FFMPEG with UDP transport for lowest latency
-        os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;udp|fflags;nobuffer|flags;low_delay|framedrop;1"
-        cap = cv2.VideoCapture(url, cv2.CAP_FFMPEG)
-        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-        if cap.isOpened():
-            return cap
-        # Fallback to TCP
-        os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|fflags;nobuffer|flags;low_delay|framedrop;1"
-        cap = cv2.VideoCapture(url, cv2.CAP_FFMPEG)
-        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-        if cap.isOpened():
-            return cap
+        transports = [WEB_RTSP_TRANSPORT, "tcp", "udp"]
+        tried = set()
+        for transport in transports:
+            if transport in tried:
+                continue
+            tried.add(transport)
+            os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = (
+                f"rtsp_transport;{transport}|fflags;nobuffer|flags;low_delay|framedrop;1|"
+                "probesize;32|analyzeduration;0"
+            )
+            cap = cv2.VideoCapture(url, cv2.CAP_FFMPEG)
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+            cap.set(cv2.CAP_PROP_FPS, fps)
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            if cap.isOpened():
+                return cap
 
     # USB
     if mode in ("usb", "auto") and os.path.exists(dev):
         cap = cv2.VideoCapture(dev, cv2.CAP_V4L2)
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, inp.get("width", 640))
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, inp.get("height", 480))
-        cap.set(cv2.CAP_PROP_FPS, inp.get("fps", 25))
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+        cap.set(cv2.CAP_PROP_FPS, fps)
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         if cap.isOpened():
             return cap
@@ -308,14 +322,18 @@ def _stream_capture_loop():
     """Background thread: grabs frames from the main stream for live view.
 
     Low-latency strategy:
-    - Grab+discard frames to drain the decode buffer, only process the latest.
+    - Grab one buffered frame to reduce stale output.
     - Cache zone config (reload every 2 seconds, not every frame).
-    - Use JPEG quality 50 for fast encoding.
+    - Throttle encode rate and keep JPEG quality/resolution bounded.
     """
     global _stream_frame
     cap = None
     yellow_y, red_y = 0.33, 0.66
     config_refresh_ns = 0
+
+    target_interval = 1.0 / max(WEB_PREVIEW_FPS, 1.0)
+    next_frame_time = time.monotonic()
+    read_failures = 0
 
     while True:
         if cap is None or not cap.isOpened():
@@ -324,21 +342,29 @@ def _stream_capture_loop():
                 placeholder = np.zeros((480, 640, 3), dtype=np.uint8)
                 cv2.putText(placeholder, "Camera unavailable",
                             (160, 230), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 255), 2)
-                _, buf = cv2.imencode(".jpg", placeholder, [cv2.IMWRITE_JPEG_QUALITY, 50])
+                _, buf = cv2.imencode(".jpg", placeholder, [cv2.IMWRITE_JPEG_QUALITY, WEB_JPEG_QUALITY])
                 with _stream_lock:
                     _stream_frame = buf.tobytes()
                 time.sleep(2.0)
                 continue
 
-        # Drain buffer: grab without decoding to skip stale frames
-        cap.grab()
+        now_mono = time.monotonic()
+        if now_mono < next_frame_time:
+            time.sleep(next_frame_time - now_mono)
+        next_frame_time = time.monotonic() + target_interval
+
+        # Drain one buffered frame to reduce stale output.
         cap.grab()
         ret, frame = cap.read()
         if not ret:
-            cap.release()
-            cap = None
-            time.sleep(0.5)
+            read_failures += 1
+            if read_failures >= 5:
+                cap.release()
+                cap = None
+                read_failures = 0
+                time.sleep(0.5)
             continue
+        read_failures = 0
 
         # Refresh zone config every 2 seconds
         now = time.time_ns()
@@ -351,7 +377,13 @@ def _stream_capture_loop():
 
         frame = _draw_zone_overlay(frame, yellow_y, red_y)
 
-        _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 50])
+        # Keep web preview resolution bounded to reduce encode CPU and jitter.
+        if WEB_PREVIEW_WIDTH > 0 and frame.shape[1] > WEB_PREVIEW_WIDTH:
+            scale = WEB_PREVIEW_WIDTH / float(frame.shape[1])
+            out_h = max(1, int(frame.shape[0] * scale))
+            frame = cv2.resize(frame, (WEB_PREVIEW_WIDTH, out_h), interpolation=cv2.INTER_AREA)
+
+        _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, WEB_JPEG_QUALITY])
         with _stream_lock:
             _stream_frame = buf.tobytes()
 

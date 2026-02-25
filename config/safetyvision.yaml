@@ -2,7 +2,7 @@
 # ──────────────────────────
 
 input:
-  mode: auto                       # auto | rtsp | usb
+  mode: rtsp                       # rtsp | auto | usb
   # Sub stream (640x480, 25fps) for YOLO detection
   rtsp_url: "rtsp://admin:matrix18@192.168.1.108:554/cam/realmonitor?channel=1&subtype=1"
   # Main stream (1280x960, 15fps) for web UI live view

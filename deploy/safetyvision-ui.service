@@ -19,6 +19,10 @@ SyslogIdentifier=safetyvision-ui
 Environment=SAFETYVISION_CONFIG=/opt/safetyvision/config/safetyvision.yaml
 Environment=SAFETYVISION_UI_USER=admin
 Environment=SAFETYVISION_UI_PASS=safetyvision
+Environment=SAFETYVISION_WEB_RTSP_TRANSPORT=tcp
+Environment=SAFETYVISION_WEB_PREVIEW_WIDTH=960
+Environment=SAFETYVISION_WEB_PREVIEW_FPS=12
+Environment=SAFETYVISION_WEB_JPEG_QUALITY=45
 
 [Install]
 WantedBy=multi-user.target

@@ -61,6 +61,7 @@ cp -r "$PROJECT_DIR"/src "$PROJECT_DIR"/config "$PROJECT_DIR"/assets \
 python3.11 -m venv /opt/safetyvision/.venv
 /opt/safetyvision/.venv/bin/pip install --upgrade pip
 /opt/safetyvision/.venv/bin/pip install -e /opt/safetyvision/
+/opt/safetyvision/.venv/bin/pip install -e "/opt/safetyvision[webui]"
 
 chown -R safetyvision:safetyvision /opt/safetyvision
 mkdir -p /var/log/safetyvision
@@ -69,8 +70,12 @@ chown safetyvision:safetyvision /var/log/safetyvision
 # 6. Install systemd service
 echo "[6/6] Installing systemd service..."
 cp "$PROJECT_DIR"/deploy/safetyvision.service /etc/systemd/system/
+cp "$PROJECT_DIR"/deploy/safetyvision-ui.service /etc/systemd/system/
+cp "$PROJECT_DIR"/deploy/safetyvision-sudoers /etc/sudoers.d/safetyvision
+chmod 440 /etc/sudoers.d/safetyvision
 systemctl daemon-reload
 systemctl enable safetyvision
+systemctl enable safetyvision-ui
 
 echo ""
 echo "=== Setup complete ==="
@@ -78,4 +83,5 @@ echo "Place your ONNX model at: /opt/safetyvision/models/yolo26n.onnx"
 echo "Place WAV files at: /opt/safetyvision/assets/audio/"
 echo "Edit config: /opt/safetyvision/config/safetyvision.yaml"
 echo "Start: systemctl start safetyvision"
+echo "Start UI: systemctl start safetyvision-ui"
 echo "Logs:  journalctl -u safetyvision -f"

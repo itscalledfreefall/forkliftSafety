@@ -28,10 +28,10 @@ def _pin_to_cores(cores: list[int]) -> None:
 def _build_gst_pipeline(cfg: SafetyVisionConfig) -> str:
     """Build a GStreamer pipeline string for low-latency RTSP capture."""
     return (
-        f"rtspsrc location={cfg.input.rtsp_url} latency=0 drop-on-latency=true "
+        f"rtspsrc location={cfg.input.rtsp_url} protocols=tcp latency=50 drop-on-latency=true "
         f"! decodebin ! videoconvert "
         f"! video/x-raw,width={cfg.input.width},height={cfg.input.height} "
-        f"! appsink max-buffers=1 drop=true"
+        f"! appsink sync=false max-buffers=1 drop=true"
     )
 
 
@@ -52,7 +52,13 @@ def _open_rtsp(cfg: SafetyVisionConfig) -> cv2.VideoCapture:
     cap = cv2.VideoCapture(gst, cv2.CAP_GSTREAMER)
     if not cap.isOpened():
         logger.warning("GStreamer RTSP failed, falling back to FFmpeg backend")
+        os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = (
+            "rtsp_transport;tcp|fflags;nobuffer|flags;low_delay|framedrop;1|probesize;32|analyzeduration;0"
+        )
         cap = cv2.VideoCapture(cfg.input.rtsp_url, cv2.CAP_FFMPEG)
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, cfg.input.width)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, cfg.input.height)
+        cap.set(cv2.CAP_PROP_FPS, cfg.input.fps)
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
     return cap
 
