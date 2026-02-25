@@ -256,7 +256,6 @@ def _open_stream_camera() -> cv2.VideoCapture:
     if mode in ("usb", "auto"):
         if os.path.exists(dev):
             cap = cv2.VideoCapture(dev, cv2.CAP_V4L2)
-            cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"YUYV"))
             cap.set(cv2.CAP_PROP_FRAME_WIDTH, inp.get("width", 640))
             cap.set(cv2.CAP_PROP_FRAME_HEIGHT, inp.get("height", 480))
             cap.set(cv2.CAP_PROP_FPS, inp.get("fps", 30))
