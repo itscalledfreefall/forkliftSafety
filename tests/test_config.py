@@ -111,6 +111,20 @@ class TestValidation:
         with pytest.raises(ConfigError, match="min_alert_confidence"):
             validate(cfg)
 
+    def test_zone_polygons_require_points_when_enabled(self):
+        cfg = SafetyVisionConfig()
+        cfg.alert.use_zone_polygons = True
+        cfg.alert.danger_zone_polygon = []
+        cfg.alert.medium_zone_polygon = []
+        with pytest.raises(ConfigError, match="use_zone_polygons"):
+            validate(cfg)
+
+    def test_invalid_zone_polygon_point(self):
+        cfg = SafetyVisionConfig()
+        cfg.alert.danger_zone_polygon = [[0.1, 0.2], [0.3], [0.5, 0.6]]
+        with pytest.raises(ConfigError, match="danger_zone_polygon"):
+            validate(cfg)
+
     def test_valid_config_passes(self):
         cfg = SafetyVisionConfig()
         validate(cfg)  # should not raise

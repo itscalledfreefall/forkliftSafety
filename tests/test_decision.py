@@ -15,6 +15,8 @@ def _make_event(
     ts_ns: int = 0,
     conf: float = 0.8,
     area_ratio: float = 0.20,
+    zone_level: str = "",
+    zone_conf: float = 0.0,
 ) -> DetectionEvent:
     return DetectionEvent(
         timestamp_ns=ts_ns,
@@ -22,6 +24,8 @@ def _make_event(
         confidence_max=conf if person else 0.0,
         bbox_count=1 if person else 0,
         max_bbox_area_ratio=area_ratio if person else 0.0,
+        zone_level=zone_level if person else "",
+        zone_confidence_max=zone_conf if person else 0.0,
         source_id="test",
     )
 
@@ -36,6 +40,20 @@ def worker():
     cfg.alert.min_alert_confidence = 0.60
     cfg.alert.zone_hysteresis_ratio = 0.02
     cfg.alert.distance_smoothing_alpha = 1.0
+    cfg.alert.always_announce_person = False
+    w = DecisionWorker(cfg, Queue(), Queue(), threading.Event())
+    return w
+
+
+@pytest.fixture
+def worker_zone():
+    cfg = SafetyVisionConfig()
+    cfg.alert.repeat_interval_sec = 5.0
+    cfg.alert.min_clear_sec = 3.0
+    cfg.alert.min_alert_confidence = 0.60
+    cfg.alert.use_zone_polygons = True
+    cfg.alert.danger_zone_polygon = [[0.3, 0.5], [0.7, 0.5], [0.9, 1.0], [0.1, 1.0]]
+    cfg.alert.medium_zone_polygon = [[0.2, 0.4], [0.8, 0.4], [1.0, 1.0], [0.0, 1.0]]
     cfg.alert.always_announce_person = False
     w = DecisionWorker(cfg, Queue(), Queue(), threading.Event())
     return w
@@ -99,6 +117,30 @@ class TestAlertStateMachine:
         alert = worker.process_event(event)
         assert alert is None
         assert worker.state == AlertState.IDLE
+
+    def test_zone_mode_uses_zone_level(self, worker_zone):
+        event = _make_event(
+            person=True,
+            ts_ns=1_000_000_000,
+            zone_level="danger",
+            zone_conf=0.8,
+            area_ratio=0.01,  # ignored in zone mode
+        )
+        alert = worker_zone.process_event(event)
+        assert alert is not None
+        assert alert.sound_key == "danger"
+
+    def test_zone_mode_rejects_low_zone_confidence(self, worker_zone):
+        event = _make_event(
+            person=True,
+            ts_ns=1_000_000_000,
+            zone_level="medium",
+            zone_conf=0.40,
+            area_ratio=0.5,
+        )
+        alert = worker_zone.process_event(event)
+        assert alert is None
+        assert worker_zone.state == AlertState.IDLE
 
     def test_clears_after_min_clear(self, worker):
         worker.process_event(_make_event(person=True, ts_ns=1_000_000_000))

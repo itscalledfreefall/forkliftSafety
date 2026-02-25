@@ -4,10 +4,13 @@ import numpy as np
 import pytest
 
 from safetyvision.types import Detection
+from safetyvision.config import SafetyVisionConfig
 from safetyvision.workers.inference import (
+    _classify_detection_zone,
     _compute_iou,
     _letterbox,
     _nms,
+    _point_in_polygon,
     _postprocess,
     _preprocess,
 )
@@ -88,6 +91,29 @@ class TestIoU:
         d2 = Detection(50, 50, 150, 150, 0.8, 0)
         iou = _compute_iou(d1, d2)
         assert 0.0 < iou < 1.0
+
+
+class TestZonePolygons:
+    def test_point_in_polygon(self):
+        poly = [[0.2, 0.2], [0.8, 0.2], [0.8, 0.8], [0.2, 0.8]]
+        assert _point_in_polygon(0.5, 0.5, poly) is True
+        assert _point_in_polygon(0.1, 0.1, poly) is False
+
+    def test_detection_zone_classification(self):
+        cfg = SafetyVisionConfig()
+        cfg.alert.use_zone_polygons = True
+        cfg.alert.danger_zone_polygon = [[0.4, 0.5], [0.6, 0.5], [0.7, 1.0], [0.3, 1.0]]
+        cfg.alert.medium_zone_polygon = [[0.2, 0.3], [0.8, 0.3], [1.0, 1.0], [0.0, 1.0]]
+
+        # Footpoint near center-bottom should be in danger zone.
+        d = Detection(x1=280, y1=200, x2=360, y2=470, confidence=0.9, class_id=0)
+        zone = _classify_detection_zone(d, frame_w=640, frame_h=480, cfg=cfg)
+        assert zone == "danger"
+
+        # Footpoint outside configured polygons -> no zone.
+        d2 = Detection(x1=10, y1=20, x2=40, y2=100, confidence=0.9, class_id=0)
+        zone2 = _classify_detection_zone(d2, frame_w=640, frame_h=480, cfg=cfg)
+        assert zone2 == ""
 
 
 class TestPostprocess:

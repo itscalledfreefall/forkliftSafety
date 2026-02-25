@@ -22,6 +22,17 @@ model:
 alert:
   siren_wav: "assets/audio/danger.wav"
   voice_wav: "assets/audio/medium.wav"
+  use_zone_polygons: true
+  danger_zone_polygon:             # normalized [x, y], bottom-center near forklift
+    - [0.35, 0.58]
+    - [0.65, 0.58]
+    - [0.90, 1.00]
+    - [0.10, 1.00]
+  medium_zone_polygon:             # wider zone ahead
+    - [0.20, 0.40]
+    - [0.80, 0.40]
+    - [1.00, 1.00]
+    - [0.00, 1.00]
   close_area_ratio: 0.18
   medium_area_ratio: 0.06
   min_alert_confidence: 0.55

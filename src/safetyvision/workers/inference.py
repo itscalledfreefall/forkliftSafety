@@ -77,6 +77,44 @@ def _compute_iou(a: Detection, b: Detection) -> float:
     return inter / union if union > 0 else 0.0
 
 
+def _point_in_polygon(x: float, y: float, polygon: list[list[float]]) -> bool:
+    """Ray-casting point-in-polygon test for normalized coordinates."""
+    if len(polygon) < 3:
+        return False
+    inside = False
+    j = len(polygon) - 1
+    for i in range(len(polygon)):
+        xi, yi = polygon[i]
+        xj, yj = polygon[j]
+        intersects = ((yi > y) != (yj > y)) and (
+            x < (xj - xi) * (y - yi) / ((yj - yi) + 1e-12) + xi
+        )
+        if intersects:
+            inside = not inside
+        j = i
+    return inside
+
+
+def _classify_detection_zone(
+    det: Detection,
+    frame_w: int,
+    frame_h: int,
+    cfg: SafetyVisionConfig,
+) -> str:
+    """Classify detection into configured danger/medium polygons."""
+    if not cfg.alert.use_zone_polygons or frame_w <= 0 or frame_h <= 0:
+        return ""
+    x = ((det.x1 + det.x2) * 0.5) / frame_w
+    y = det.y2 / frame_h  # foot point is more stable for floor-risk zones
+    x = float(min(max(x, 0.0), 1.0))
+    y = float(min(max(y, 0.0), 1.0))
+    if _point_in_polygon(x, y, cfg.alert.danger_zone_polygon):
+        return "danger"
+    if _point_in_polygon(x, y, cfg.alert.medium_zone_polygon):
+        return "medium"
+    return ""
+
+
 def _postprocess(
     output: np.ndarray,
     conf_thresh: float,
@@ -332,6 +370,18 @@ class InferenceWorker:
                 (((d.x2 - d.x1) * (d.y2 - d.y1)) / frame_area for d in dets),
                 default=0.0,
             )
+            zone_level = ""
+            zone_conf_max = 0.0
+            for d in dets:
+                zone = _classify_detection_zone(d, frame_w, frame_h, self._cfg)
+                if zone == "danger":
+                    if zone_level != "danger" or d.confidence > zone_conf_max:
+                        zone_level = "danger"
+                        zone_conf_max = d.confidence
+                elif zone == "medium" and zone_level != "danger":
+                    if zone_level != "medium" or d.confidence > zone_conf_max:
+                        zone_level = "medium"
+                        zone_conf_max = d.confidence
 
             event = DetectionEvent(
                 timestamp_ns=pkt.timestamp_ns,
@@ -339,6 +389,8 @@ class InferenceWorker:
                 confidence_max=max_conf,
                 bbox_count=len(dets),
                 max_bbox_area_ratio=max_area_ratio,
+                zone_level=zone_level,
+                zone_confidence_max=zone_conf_max,
                 source_id=pkt.source_id,
             )
 

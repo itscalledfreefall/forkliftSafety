@@ -36,6 +36,9 @@ class ModelConfig:
 class AlertConfig:
     siren_wav: str = "assets/audio/siren.wav"
     voice_wav: str = "assets/audio/warning_voice.wav"
+    use_zone_polygons: bool = False
+    danger_zone_polygon: List[List[float]] = field(default_factory=list)
+    medium_zone_polygon: List[List[float]] = field(default_factory=list)
     close_area_ratio: float = 0.20
     medium_area_ratio: float = 0.08
     min_alert_confidence: float = 0.60
@@ -117,6 +120,19 @@ class ConfigError(ValueError):
     """Raised for invalid configuration."""
 
 
+def _validate_polygon(name: str, polygon: List[List[float]]) -> None:
+    if not polygon:
+        return
+    if len(polygon) < 3:
+        raise ConfigError(f"alert.{name} must contain at least 3 points")
+    for idx, pt in enumerate(polygon):
+        if not isinstance(pt, list) or len(pt) != 2:
+            raise ConfigError(f"alert.{name}[{idx}] must be [x, y]")
+        x, y = pt
+        if not (0.0 <= float(x) <= 1.0 and 0.0 <= float(y) <= 1.0):
+            raise ConfigError(f"alert.{name}[{idx}] coordinates must be normalized between 0 and 1")
+
+
 def validate(cfg: SafetyVisionConfig) -> None:
     """Raise ConfigError on invalid values."""
     if cfg.input.mode not in ("rtsp", "usb"):
@@ -156,5 +172,14 @@ def validate(cfg: SafetyVisionConfig) -> None:
         raise ConfigError("alert.zone_hysteresis_ratio must be between 0 and 0.5")
     if not 0.0 < cfg.alert.distance_smoothing_alpha <= 1.0:
         raise ConfigError("alert.distance_smoothing_alpha must be between 0 and 1")
+    _validate_polygon("danger_zone_polygon", cfg.alert.danger_zone_polygon)
+    _validate_polygon("medium_zone_polygon", cfg.alert.medium_zone_polygon)
+    if cfg.alert.use_zone_polygons:
+        has_danger = len(cfg.alert.danger_zone_polygon) >= 3
+        has_medium = len(cfg.alert.medium_zone_polygon) >= 3
+        if not (has_danger or has_medium):
+            raise ConfigError(
+                "alert.use_zone_polygons is true, but no valid zone polygons are configured"
+            )
     if cfg.perf.max_queue_size < 1:
         raise ConfigError("perf.max_queue_size must be >= 1")

@@ -29,6 +29,8 @@ class DetectionEvent:
     confidence_max: float
     bbox_count: int
     max_bbox_area_ratio: float = 0.0
+    zone_level: str = ""
+    zone_confidence_max: float = 0.0
     source_id: str = ""
 
 
