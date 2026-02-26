@@ -66,6 +66,9 @@ models/
 *.tif
 *.tiff
 
+# Recordings
+recordings/
+
 # Environment files
 .env
 .env.*

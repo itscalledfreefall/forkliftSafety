@@ -1,0 +1,23 @@
+[Unit]
+Description=SafetyVision Mainstream Recorder
+After=network.target safetyvision-network.service
+Wants=network.target
+
+[Service]
+Type=simple
+User=inofatech
+Group=inofatech
+WorkingDirectory=/home/inofatech/forkliftSafety
+ExecStart=/home/inofatech/forkliftSafety/scripts/record.sh /home/inofatech/forkliftSafety/config/safetyvision.yaml
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=safetyvision-record
+Environment=SAFETYVISION_RECORD_DIR=/home/inofatech/forkliftSafety/recordings
+Environment=SAFETYVISION_SEGMENT_SEC=3600
+Environment=SAFETYVISION_MAX_DISK_PERCENT=80
+Environment=SAFETYVISION_MIN_FREE_GB=5
+
+[Install]
+WantedBy=multi-user.target
