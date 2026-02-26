@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import platform
 import threading
 import time
 from pathlib import Path
@@ -15,6 +16,17 @@ from loguru import logger
 
 from safetyvision.config import SafetyVisionConfig
 from safetyvision.types import Detection, DetectionEvent, FramePacket
+
+
+def _normalize_runtime(requested_runtime: str, machine: Optional[str] = None) -> str:
+    """Map unsupported runtime selections to compatible ones per architecture."""
+    machine_name = (machine or platform.machine() or "").lower()
+    is_arm = machine_name.startswith("arm") or machine_name.startswith("aarch64")
+
+    # OpenVINO on Raspberry Pi/ARM is commonly unavailable in this stack.
+    if requested_runtime == "openvino" and is_arm:
+        return "onnxruntime"
+    return requested_runtime
 
 
 def _pin_to_cores(cores: list[int]) -> None:
@@ -226,7 +238,15 @@ class InferenceWorker:
             self._thread.join(timeout=5.0)
 
     def _load_model(self) -> None:
-        runtime = self._cfg.model.runtime
+        requested_runtime = self._cfg.model.runtime
+        runtime = _normalize_runtime(requested_runtime)
+
+        if runtime != requested_runtime:
+            logger.warning(
+                "Runtime '{}' is not supported on this architecture; using '{}' instead",
+                requested_runtime,
+                runtime,
+            )
 
         if runtime == "openvino":
             self._load_openvino()
@@ -236,20 +256,35 @@ class InferenceWorker:
             self._load_onnxruntime(self._cfg.model.path_onnx)
 
     def _load_onnxruntime(self, model_path: str) -> None:
-        import onnxruntime as ort
+        try:
+            import onnxruntime as ort
 
-        sess_opts = ort.SessionOptions()
-        sess_opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-        sess_opts.intra_op_num_threads = self._cfg.perf.inference_threads
-        sess_opts.inter_op_num_threads = 1
-        sess_opts.enable_cpu_mem_arena = True
+            sess_opts = ort.SessionOptions()
+            sess_opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+            sess_opts.intra_op_num_threads = self._cfg.perf.inference_threads
+            sess_opts.inter_op_num_threads = 1
+            sess_opts.enable_cpu_mem_arena = True
 
-        self._session = ort.InferenceSession(
-            model_path, sess_options=sess_opts, providers=["CPUExecutionProvider"]
-        )
-        self._input_name = self._session.get_inputs()[0].name
-        self._runtime_type = "onnxruntime"
-        logger.info("ONNX Runtime model loaded: {}", model_path)
+            self._session = ort.InferenceSession(
+                model_path, sess_options=sess_opts, providers=["CPUExecutionProvider"]
+            )
+            self._input_name = self._session.get_inputs()[0].name
+            self._runtime_type = "onnxruntime"
+            logger.info("ONNX Runtime model loaded: {}", model_path)
+        except Exception as e:
+            pt_path = Path(self._cfg.model.path_pt)
+            if pt_path.exists():
+                logger.warning(
+                    "ONNX Runtime unavailable ({}); falling back to Ultralytics PT model: {}",
+                    e,
+                    pt_path,
+                )
+                self._load_ultralytics(str(pt_path))
+                return
+            raise RuntimeError(
+                f"Failed to load ONNX Runtime model '{model_path}': {e}. "
+                "Install onnxruntime or provide model.path_pt for ultralytics fallback."
+            ) from e
 
     def _load_openvino(self) -> None:
         try:
@@ -274,11 +309,16 @@ class InferenceWorker:
             self._load_onnxruntime(fallback_path)
 
     def _load_ultralytics(self, model_path: str) -> None:
-        from ultralytics import YOLO
+        try:
+            from ultralytics import YOLO
 
-        self._pt_model = YOLO(model_path)
-        self._runtime_type = "ultralytics"
-        logger.info("Ultralytics PT model loaded: {}", model_path)
+            self._pt_model = YOLO(model_path)
+            self._runtime_type = "ultralytics"
+            logger.info("Ultralytics PT model loaded: {}", model_path)
+        except Exception as e:
+            raise RuntimeError(
+                f"Failed to load Ultralytics PT model '{model_path}': {e}"
+            ) from e
 
     def _infer(self, blob: np.ndarray) -> np.ndarray:
         if self._runtime_type == "openvino":
