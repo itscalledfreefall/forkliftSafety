@@ -25,6 +25,25 @@
 
     <!-- Dashboard Tab -->
     <section id="tab-dashboard" class="tab-content active">
+      <div class="metrics-grid">
+        <div class="metric-card">
+          <div class="metric-label">Pipeline FPS</div>
+          <div class="metric-value" id="metricFps">--</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Total Latency</div>
+          <div class="metric-value" id="metricLatency">--</div>
+          <div class="metric-unit">ms</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Capture FPS</div>
+          <div class="metric-value" id="metricCaptureFps">--</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Inference FPS</div>
+          <div class="metric-value" id="metricInferenceFps">--</div>
+        </div>
+      </div>
       <div class="stream-container">
         <img id="liveStream" src="" alt="Live Feed">
         <div id="streamOffline" class="stream-offline">Stream offline</div>

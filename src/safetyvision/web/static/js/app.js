@@ -46,6 +46,40 @@
   pollStatus();
   setInterval(pollStatus, 5000);
 
+  // ── Metrics ─────────────────────────────────────────────────
+  function setMetricValue(id, value, digits) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    if (typeof value !== 'number' || Number.isNaN(value)) {
+      el.textContent = '--';
+      return;
+    }
+    el.textContent = value.toFixed(digits);
+  }
+
+  async function pollMetrics() {
+    try {
+      const res = await fetch('/api/metrics');
+      if (res.status === 401) return;
+      const data = await res.json();
+      if (!data.available) {
+        setMetricValue('metricFps', NaN, 1);
+        setMetricValue('metricLatency', NaN, 1);
+        setMetricValue('metricCaptureFps', NaN, 1);
+        setMetricValue('metricInferenceFps', NaN, 1);
+        return;
+      }
+      setMetricValue('metricFps', data.fps, 1);
+      setMetricValue('metricLatency', data.latency_total_ms, 1);
+      setMetricValue('metricCaptureFps', data.capture_fps, 1);
+      setMetricValue('metricInferenceFps', data.inference_fps, 1);
+    } catch {
+      // Keep existing values on transient errors.
+    }
+  }
+  pollMetrics();
+  setInterval(pollMetrics, 1000);
+
   // ── Live Stream ─────────────────────────────────────────────
   function startStream() {
     const img = document.getElementById('liveStream');

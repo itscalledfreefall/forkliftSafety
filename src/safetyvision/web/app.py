@@ -6,11 +6,14 @@ import argparse
 import asyncio
 import copy
 import hashlib
+import json
 import os
+import re
 import secrets
 import shutil
 import subprocess
 import time
+from collections import deque
 from pathlib import Path
 from typing import Optional
 
@@ -203,6 +206,153 @@ async def get_status(_token: str = Depends(_check_session)):
     except Exception:
         state = "unknown"
     return {"service": state}
+
+
+def _metrics_log_candidates() -> list[Path]:
+    """Return likely paths for the SafetyVision metrics log."""
+    candidates: list[Path] = []
+    env_path = os.environ.get("SAFETYVISION_METRICS_LOG", "").strip()
+    if env_path:
+        candidates.append(Path(env_path))
+
+    try:
+        raw = _load_raw_config()
+    except Exception:
+        raw = {}
+
+    log_dir_raw = str(raw.get("logging", {}).get("log_dir", "./logs"))
+    log_dir = Path(log_dir_raw)
+    cfg_path = Path(CONFIG_PATH)
+
+    if log_dir.is_absolute():
+        candidates.append(log_dir / "safetyvision.log")
+    else:
+        candidates.append((Path.cwd() / log_dir / "safetyvision.log").resolve())
+        candidates.append((cfg_path.parent / log_dir / "safetyvision.log").resolve())
+        candidates.append((cfg_path.parent.parent / log_dir / "safetyvision.log").resolve())
+
+    candidates.append(Path("/var/log/safetyvision/safetyvision.log"))
+
+    # Stable dedupe while preserving order
+    seen: set[str] = set()
+    unique: list[Path] = []
+    for p in candidates:
+        key = str(p)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(p)
+    return unique
+
+
+def _coerce_metric(payload: dict, key: str, default: float = 0.0) -> float:
+    try:
+        return float(payload.get(key, default))
+    except (TypeError, ValueError):
+        return default
+
+
+def _normalize_metrics(payload: dict) -> dict:
+    """Normalize metrics payload shape for frontend consumption."""
+    return {
+        "fps": _coerce_metric(payload, "fps"),
+        "capture_fps": _coerce_metric(payload, "capture_fps"),
+        "inference_fps": _coerce_metric(payload, "inference_fps"),
+        "decision_fps": _coerce_metric(payload, "decision_fps"),
+        "latency_capture_ms": _coerce_metric(payload, "latency_capture_ms"),
+        "latency_inference_ms": _coerce_metric(payload, "latency_inference_ms"),
+        "latency_decision_ms": _coerce_metric(payload, "latency_decision_ms"),
+        "latency_total_ms": _coerce_metric(payload, "latency_total_ms"),
+        "frames_dropped": int(_coerce_metric(payload, "frames_dropped")),
+        "alerts": int(_coerce_metric(payload, "alerts")),
+        "uptime_s": _coerce_metric(payload, "uptime_s"),
+    }
+
+
+def _try_parse_metrics_candidate(candidate: str) -> Optional[dict]:
+    """Parse a metrics JSON candidate, including escaped-quote variants."""
+    try:
+        parsed = json.loads(candidate)
+    except Exception:
+        parsed = None
+    if isinstance(parsed, dict) and parsed.get("type") == "metrics":
+        return _normalize_metrics(parsed)
+
+    if '\\"' in candidate:
+        try:
+            parsed = json.loads(candidate.replace('\\"', '"'))
+        except Exception:
+            parsed = None
+        if isinstance(parsed, dict) and parsed.get("type") == "metrics":
+            return _normalize_metrics(parsed)
+    return None
+
+
+def _extract_metrics_from_text(text: str) -> Optional[dict]:
+    """Extract metrics payload from a log line."""
+    if not text:
+        return None
+
+    # Case 1: direct metrics JSON line.
+    try:
+        parsed = json.loads(text)
+    except Exception:
+        parsed = None
+
+    if isinstance(parsed, dict):
+        if parsed.get("type") == "metrics":
+            return _normalize_metrics(parsed)
+        msg = parsed.get("msg")
+        if isinstance(msg, str):
+            try:
+                msg_json = json.loads(msg)
+            except Exception:
+                msg_json = None
+            if isinstance(msg_json, dict) and msg_json.get("type") == "metrics":
+                return _normalize_metrics(msg_json)
+
+    # Case 2: extract a metrics object from mixed/invalid log wrappers.
+    # This handles lines like:
+    #   {"msg":"{"type": "metrics", ...}"}
+    # where the outer line is not valid JSON.
+    patterns = (
+        r'\{[^{}]*"type"\s*:\s*"metrics"[^{}]*\}',
+        r'\{[^{}]*\\"type\\"\s*:\s*\\"metrics\\"[^{}]*\}',
+    )
+    for pattern in patterns:
+        matches = list(re.finditer(pattern, text))
+        for match in reversed(matches):
+            data = _try_parse_metrics_candidate(match.group(0))
+            if data is not None:
+                return data
+
+    return None
+
+
+def _read_latest_metrics(max_lines: int = 2000) -> Optional[dict]:
+    """Read latest metrics snapshot from SafetyVision log file."""
+    for path in _metrics_log_candidates():
+        if not path.exists():
+            continue
+        try:
+            with open(path, "r", encoding="utf-8", errors="ignore") as f:
+                tail = deque(f, maxlen=max_lines)
+        except Exception:
+            continue
+
+        for line in reversed(tail):
+            data = _extract_metrics_from_text(line.strip())
+            if data is not None:
+                return data
+    return None
+
+
+@app.get("/api/metrics")
+async def get_metrics(_token: str = Depends(_check_session)):
+    data = _read_latest_metrics()
+    if data is None:
+        return {"available": False}
+    return {"available": True, **data}
 
 
 @app.post("/api/apply")
