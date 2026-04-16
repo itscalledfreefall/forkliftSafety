@@ -45,6 +45,9 @@ Capture → Inference → Decision → Alert
 | `config/safetyvision.raspberry.yaml` | Add distance mode config fields |
 | `src/safetyvision/web/app.py` | Mount calibration router |
 | `src/safetyvision/types.py` | Add `distance_m: float | None = None` to `DetectionEvent` |
+| `src/safetyvision/workers/metrics.py` | Add `last_distance_m`, `last_zone_level` to snapshot |
+| `src/safetyvision/web/static/js/app.js` | Render distance readout |
+| `src/safetyvision/web/templates/index.html` | Add distance display element |
 
 ## Zone Strategy Interface
 
@@ -81,6 +84,7 @@ class DistanceZoneStrategy:
             source=np.array(data["source_points"], dtype=np.float32),
             target=np.array(data["target_points"], dtype=np.float32),
         )
+        # Thresholds come from safetyvision.yaml (single source of truth)
         self.danger_m = danger_m
         self.warning_m = warning_m
 
@@ -146,15 +150,27 @@ warning_threshold_m: float = 5.0
 {
   "source_points": [[160, 96], [480, 96], [128, 256], [512, 256]],
   "target_points": [[0.0, 8.0], [6.0, 8.0], [0.0, 2.0], [6.0, 2.0]],
-  "danger_threshold_m": 2.0,
-  "warning_threshold_m": 5.0,
   "created_at": "2026-04-16T12:00:00Z"
 }
 ```
 
 - `source_points`: 4 pixel coordinates clicked in the camera frame
-- `target_points`: 4 corresponding real-world coordinates in meters (measured by operator)
-- Thresholds are duplicated here so the calibration file is self-contained
+- `target_points`: 4 corresponding real-world coordinates in meters, in a forklift-relative coordinate frame (see Coordinate Frame below)
+- Thresholds (`danger_threshold_m`, `warning_threshold_m`) live only in `safetyvision.yaml` — single source of truth. The calibration file stores only the point mapping.
+
+## Coordinate Frame
+
+All real-world target coordinates are in a **forklift-relative frame**:
+
+- **Origin (0, 0)** = the camera/forklift position (where the camera is mounted)
+- **X axis** = lateral (left/right from the forklift's perspective)
+- **Y axis** = forward distance from the forklift
+
+The calibration UI must enforce this: the operator measures each ground point's distance *from the camera mount position*. The UI instructions will say: "Measure each point's distance from the camera in meters. X = left/right, Y = forward."
+
+This means `np.linalg.norm(world_pts, axis=1)` correctly computes the Euclidean distance from the forklift to each detected person.
+
+If the operator's reference points are not naturally centered on the forklift (e.g. they use fixed floor markings), they must offset their measurements so the camera mount is at (0, 0). The calibration UI will include a note about this.
 
 ## Calibration Web UI
 
@@ -171,9 +187,8 @@ Split layout:
 |--------|------|-------------|
 | `GET` | `/api/calibration/frame` | Returns JPEG snapshot from live camera |
 | `GET` | `/api/calibration` | Returns current calibration.json (404 if none) |
-| `POST` | `/api/calibration` | Validates and saves calibration.json |
-| `POST` | `/api/calibration/apply` | Switches to distance mode, hot-reloads strategy |
-| `DELETE` | `/api/calibration` | Removes calibration, reverts to band mode |
+| `POST` | `/api/calibration` | Validates, saves calibration.json, sets `zone_mode: distance` in YAML, restarts safetyvision service |
+| `DELETE` | `/api/calibration` | Removes calibration, sets `zone_mode: bands` in YAML, restarts safetyvision service |
 
 ### Validation on POST
 
@@ -184,17 +199,18 @@ Split layout:
 - `danger_threshold_m < warning_threshold_m`
 - `danger_threshold_m > 0`
 
-## Hot Reload
+## Applying Calibration
+
+The web UI (`safetyvision-ui`) and detection pipeline (`safetyvision`) run as separate systemd services in separate processes. They cannot share memory.
 
 When the operator clicks "Save & Apply":
 
 1. Web app validates and writes `calibration.json`
-2. Web app signals `InferenceWorker` to reload strategy
-3. `InferenceWorker` creates a new `DistanceZoneStrategy` instance
-4. Thread-safe reference swap — old strategy gets garbage collected
-5. Next frame uses distance mode immediately
+2. Web app updates `zone_mode: "distance"` in `safetyvision.yaml`
+3. Web app restarts the `safetyvision` service via `systemctl restart safetyvision` (same pattern as the existing `POST /api/apply` endpoint)
+4. On startup, `InferenceWorker` reads config, factory creates the appropriate `ZoneStrategy`
 
-Mechanism: the `InferenceWorker` holds a `self._zone_strategy` attribute. The web app sets a threading event or writes to a shared reload flag. On the next frame, the worker checks the flag, rebuilds the strategy from config, and swaps the reference. Python's GIL makes single-attribute assignment atomic.
+This follows the existing config-apply pattern: write config file, restart service. No in-process signaling needed.
 
 ## DetectionEvent Update
 
@@ -213,13 +229,32 @@ class DetectionEvent:
 The `distance_m` field is:
 - `None` when using band mode
 - The closest person's distance in meters when using distance mode
-- Passed through to the web dashboard for display
-- Logged in metrics for analysis
+
+## Metrics & Dashboard Data Path
+
+Currently, `MetricsWorker` logs aggregate counters (FPS, latency, alert count) and the web dashboard polls `GET /api/metrics`. The `distance_m` value needs to reach both metrics and the dashboard.
+
+### Metrics extension
+
+Add `distance_m` and `zone_level` to the metrics snapshot. The `MetricsCollector` already receives `DetectionEvent` — extend its snapshot to include `last_distance_m` and `last_zone_level` from the most recent event.
+
+### Dashboard display
+
+The existing `GET /api/metrics` response gains two fields: `last_distance_m` (float or null) and `last_zone_level` (string). The dashboard JS already polls this endpoint — add a distance readout element that shows the value when `last_distance_m` is not null.
+
+### Modified files for this data path
+
+| File | Change |
+|------|--------|
+| `src/safetyvision/workers/metrics.py` | Add `last_distance_m`, `last_zone_level` to snapshot |
+| `src/safetyvision/web/app.py` | Include new fields in `/api/metrics` response |
+| `src/safetyvision/web/static/js/app.js` | Render distance readout when available |
+| `src/safetyvision/web/templates/index.html` | Add distance display element |
 
 ## Web Dashboard Update
 
 When distance mode is active, the existing dashboard shows:
-- Current closest person distance (e.g. "3.2m")
+- Current closest person distance (e.g. "3.2m") via the metrics poll
 - Zone status with color (green / warning / danger)
 - Link to `/calibration` page to recalibrate
 
