@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 import threading
 import time
 import wave
@@ -63,6 +64,7 @@ class AlertWorker:
         self._siren_data = None
         self._voice_data = None
         self._clip_map: dict[str, Optional[tuple[np.ndarray, int, int]]] = {}
+        self._clip_path_map: dict[str, str] = {}
         self._sd = None  # sounddevice module, lazy-loaded
         self._playback_count: int = 0
 
@@ -90,21 +92,55 @@ class AlertWorker:
             "danger": self._siren_data,
             "medium": self._voice_data,
         }
+        self._clip_path_map = {
+            "danger": self._cfg.alert.siren_wav,
+            "medium": self._cfg.alert.voice_wav,
+        }
 
-    def _play_clip(self, clip_data) -> float:
+    def _play_with_aplay(self, clip_path: str) -> bool:
+        """Fallback playback via ALSA command line for headless/Linux systems."""
+        p = Path(clip_path)
+        if not p.exists():
+            return False
+        try:
+            # Prefer ALSA direct playback when PortAudio backends are unavailable.
+            result = subprocess.run(
+                ["aplay", "-q", str(p)],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if result.returncode != 0:
+                logger.error("aplay failed for {}: {}", clip_path, result.stderr.strip())
+                return False
+            return True
+        except FileNotFoundError:
+            logger.error("aplay is not installed; cannot use ALSA fallback")
+        except Exception as e:
+            logger.error("aplay playback failed for {}: {}", clip_path, e)
+        return False
+
+    def _play_clip(self, clip_data, clip_path: str) -> float:
         """Play a preloaded clip. Returns playback start time in ms since epoch."""
         if clip_data is None:
+            # If preloading failed, still try direct file playback.
+            if clip_path:
+                start_ms = time.time() * 1000
+                if self._play_with_aplay(clip_path):
+                    return start_ms
             return 0.0
 
         samples, sample_rate, channels = clip_data
         start_ms = time.time() * 1000
 
+        played = False
         try:
             if self._sd is None:
                 import sounddevice as sd
                 self._sd = sd
 
             self._sd.play(samples, samplerate=sample_rate, blocking=True)
+            played = True
         except Exception as e:
             logger.error("Audio playback failed: {}", e)
             # Fallback: try simpleaudio
@@ -118,8 +154,12 @@ class AlertWorker:
                     sample_rate=sample_rate,
                 )
                 play_obj.wait_done()
+                played = True
             except Exception as e2:
                 logger.error("Fallback audio also failed: {}", e2)
+
+        if not played and clip_path:
+            self._play_with_aplay(clip_path)
 
         return start_ms
 
@@ -137,8 +177,10 @@ class AlertWorker:
                 alert.sound_key,
             )
 
-            clip = self._clip_map.get(alert.sound_key) or self._siren_data
-            start_ms = self._play_clip(clip)
+            sound_key = alert.sound_key if alert.sound_key in self._clip_map else "danger"
+            clip = self._clip_map.get(sound_key)
+            clip_path = self._clip_path_map.get(sound_key, self._cfg.alert.siren_wav)
+            start_ms = self._play_clip(clip, clip_path)
 
             alert.audio_started_ms = start_ms
             self._playback_count += 1

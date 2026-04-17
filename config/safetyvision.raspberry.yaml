@@ -1,0 +1,50 @@
+# SafetyVision Raspberry Pi Profile
+# Use RTSP camera streams (same camera setup as IPC profile).
+
+input:
+  mode: rtsp
+  # Detection stream (lower resolution / lower bitrate)
+  rtsp_url: "rtsp://admin:password@192.168.1.108:554/cam/realmonitor?channel=1&subtype=1"
+  # UI preview stream (higher resolution)
+  rtsp_url_main: "rtsp://admin:password@192.168.1.108:554/cam/realmonitor?channel=1&subtype=0"
+  usb_device: "/dev/video0"
+  width: 640
+  height: 480
+  fps: 25
+
+model:
+  path_onnx: "models/yolo26n.onnx"
+  path_openvino: "models/yolo26n_openvino_model/yolo26n.xml"
+  path_pt: "models/yolo26n.pt"
+  runtime: onnxruntime
+  input_size: 512
+  conf_threshold: 0.50
+  iou_threshold: 0.50
+  person_class_id: 0
+
+alert:
+  siren_wav: "assets/audio/danger.wav"
+  voice_wav: "assets/audio/medium.wav"
+  yellow_start_y: 0.33
+  red_start_y: 0.72
+  min_alert_confidence: 0.55
+  always_announce_person: false
+  repeat_interval_sec: 1.2
+  min_clear_sec: 2.5
+
+perf:
+  max_queue_size: 1
+  capture_cpu_cores: [0]
+  inference_cpu_cores: [1, 2, 3]
+  inference_threads: 2
+  temporal_smoothing_frames: 5
+
+logging:
+  level: INFO
+  json_output: true
+  log_dir: "./logs"
+  max_size_mb: 50
+
+health:
+  heartbeat_interval_sec: 1.0
+  camera_reconnect_max_backoff_sec: 30.0

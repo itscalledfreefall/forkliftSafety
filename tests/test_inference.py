@@ -9,6 +9,7 @@ from safetyvision.workers.inference import (
     _classify_detection_zone,
     _compute_iou,
     _letterbox,
+    _normalize_runtime,
     _nms,
     _postprocess,
     _preprocess,
@@ -229,3 +230,15 @@ class TestPostprocess:
         assert len(dets) == 1
         assert dets[0].class_id == 0
         assert dets[0].confidence == pytest.approx(0.92)
+
+
+class TestRuntimeNormalization:
+    def test_openvino_downgrades_on_arm(self):
+        assert _normalize_runtime("openvino", machine="aarch64") == "onnxruntime"
+        assert _normalize_runtime("openvino", machine="armv7l") == "onnxruntime"
+
+    def test_openvino_kept_on_x86(self):
+        assert _normalize_runtime("openvino", machine="x86_64") == "openvino"
+
+    def test_onnxruntime_unchanged(self):
+        assert _normalize_runtime("onnxruntime", machine="aarch64") == "onnxruntime"
