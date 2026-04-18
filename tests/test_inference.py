@@ -1,93 +1,12 @@
-"""Tests for inference preprocessing, postprocessing, and zone classification."""
+"""Tests for zone classification and HailoBackend pre/postprocessing."""
 
 import numpy as np
 import pytest
 
+from safetyvision.config import CameraConfig, SafetyVisionConfig
+from safetyvision.inference.hailo_backend import HailoBackend
 from safetyvision.types import Detection
-from safetyvision.config import SafetyVisionConfig
-from safetyvision.workers.inference import (
-    _classify_detection_zone,
-    _compute_iou,
-    _letterbox,
-    _normalize_runtime,
-    _nms,
-    _postprocess,
-    _preprocess,
-)
-
-
-class TestLetterbox:
-    def test_square_input(self):
-        frame = np.zeros((640, 640, 3), dtype=np.uint8)
-        padded, scale, pad = _letterbox(frame, 640)
-        assert padded.shape == (640, 640, 3)
-        assert scale == 1.0
-        assert pad == (0, 0)
-
-    def test_landscape_input(self):
-        frame = np.zeros((480, 640, 3), dtype=np.uint8)
-        padded, scale, pad = _letterbox(frame, 640)
-        assert padded.shape == (640, 640, 3)
-        assert scale == 1.0
-        assert pad[0] == 0
-        assert pad[1] == 80
-
-    def test_small_input_scales_up(self):
-        frame = np.zeros((240, 320, 3), dtype=np.uint8)
-        padded, scale, pad = _letterbox(frame, 640)
-        assert padded.shape == (640, 640, 3)
-        assert scale == 2.0
-
-
-class TestPreprocess:
-    def test_output_shape(self):
-        frame = np.zeros((480, 640, 3), dtype=np.uint8)
-        blob, scale, pad = _preprocess(frame, 640)
-        assert blob.shape == (1, 3, 640, 640)
-        assert blob.dtype == np.float32
-
-    def test_normalized_range(self):
-        frame = np.full((480, 640, 3), 255, dtype=np.uint8)
-        blob, _, _ = _preprocess(frame, 640)
-        assert blob.max() <= 1.0
-        assert blob.min() >= 0.0
-
-
-class TestNMS:
-    def test_empty_input(self):
-        assert _nms([], 0.5) == []
-
-    def test_single_detection(self):
-        d = Detection(0, 0, 100, 100, 0.9, 0)
-        assert len(_nms([d], 0.5)) == 1
-
-    def test_suppresses_overlapping(self):
-        d1 = Detection(0, 0, 100, 100, 0.9, 0)
-        d2 = Detection(5, 5, 105, 105, 0.7, 0)
-        result = _nms([d1, d2], 0.5)
-        assert len(result) == 1
-        assert result[0].confidence == 0.9
-
-    def test_keeps_non_overlapping(self):
-        d1 = Detection(0, 0, 50, 50, 0.9, 0)
-        d2 = Detection(200, 200, 300, 300, 0.8, 0)
-        assert len(_nms([d1, d2], 0.5)) == 2
-
-
-class TestIoU:
-    def test_identical_boxes(self):
-        d = Detection(0, 0, 100, 100, 0.9, 0)
-        assert _compute_iou(d, d) == pytest.approx(1.0)
-
-    def test_no_overlap(self):
-        d1 = Detection(0, 0, 50, 50, 0.9, 0)
-        d2 = Detection(100, 100, 200, 200, 0.8, 0)
-        assert _compute_iou(d1, d2) == pytest.approx(0.0)
-
-    def test_partial_overlap(self):
-        d1 = Detection(0, 0, 100, 100, 0.9, 0)
-        d2 = Detection(50, 50, 150, 150, 0.8, 0)
-        assert 0.0 < _compute_iou(d1, d2) < 1.0
+from safetyvision.workers.inference import _classify_detection_zone
 
 
 class TestZoneBands:
@@ -100,145 +19,142 @@ class TestZoneBands:
     @pytest.fixture
     def cfg(self):
         c = SafetyVisionConfig()
+        c.input.cameras = [CameraConfig(id="back", rtsp_url="rtsp://x/y")]
         c.alert.yellow_start_y = 0.33
         c.alert.red_start_y = 0.66
         return c
 
     def test_green_zone_top(self, cfg):
-        """Footpoint in top third => green (no zone)."""
-        # y2=100 on 480h frame => foot_y = 100/480 ≈ 0.208
         d = Detection(x1=100, y1=50, x2=200, y2=100, confidence=0.9, class_id=0)
         assert _classify_detection_zone(d, 480, cfg) == ""
 
     def test_yellow_zone_middle(self, cfg):
-        """Footpoint in middle third => medium."""
-        # y2=240 on 480h frame => foot_y = 240/480 = 0.50
         d = Detection(x1=100, y1=150, x2=200, y2=240, confidence=0.9, class_id=0)
         assert _classify_detection_zone(d, 480, cfg) == "medium"
 
     def test_red_zone_bottom(self, cfg):
-        """Footpoint in bottom third => danger."""
-        # y2=400 on 480h frame => foot_y = 400/480 ≈ 0.833
         d = Detection(x1=100, y1=300, x2=200, y2=400, confidence=0.9, class_id=0)
         assert _classify_detection_zone(d, 480, cfg) == "danger"
 
     def test_exactly_at_yellow_boundary(self, cfg):
-        """Footpoint exactly at yellow_start_y => medium."""
-        # foot_y = 0.33 exactly
-        y2 = 0.33 * 480  # 158.4
+        y2 = 0.33 * 480
         d = Detection(x1=100, y1=100, x2=200, y2=y2, confidence=0.9, class_id=0)
         assert _classify_detection_zone(d, 480, cfg) == "medium"
 
     def test_exactly_at_red_boundary(self, cfg):
-        """Footpoint exactly at red_start_y => danger."""
-        y2 = 0.66 * 480  # 316.8
+        y2 = 0.66 * 480
         d = Detection(x1=100, y1=200, x2=200, y2=y2, confidence=0.9, class_id=0)
         assert _classify_detection_zone(d, 480, cfg) == "danger"
 
     def test_footpoint_at_very_bottom(self, cfg):
-        """Footpoint at frame bottom (y2=frame_h) => danger."""
         d = Detection(x1=100, y1=300, x2=200, y2=480, confidence=0.9, class_id=0)
         assert _classify_detection_zone(d, 480, cfg) == "danger"
 
     def test_footpoint_at_very_top(self, cfg):
-        """Footpoint at frame top (y2≈0) => green."""
         d = Detection(x1=100, y1=0, x2=200, y2=10, confidence=0.9, class_id=0)
         assert _classify_detection_zone(d, 480, cfg) == ""
 
     def test_custom_cut_lines(self):
-        """Custom yellow=0.50, red=0.80."""
         cfg = SafetyVisionConfig()
+        cfg.input.cameras = [CameraConfig(id="back", rtsp_url="rtsp://x/y")]
         cfg.alert.yellow_start_y = 0.50
         cfg.alert.red_start_y = 0.80
 
-        # foot_y = 200/480 ≈ 0.417 => green
         d1 = Detection(x1=0, y1=100, x2=100, y2=200, confidence=0.9, class_id=0)
         assert _classify_detection_zone(d1, 480, cfg) == ""
 
-        # foot_y = 300/480 = 0.625 => medium
         d2 = Detection(x1=0, y1=200, x2=100, y2=300, confidence=0.9, class_id=0)
         assert _classify_detection_zone(d2, 480, cfg) == "medium"
 
-        # foot_y = 450/480 ≈ 0.9375 => danger
         d3 = Detection(x1=0, y1=350, x2=100, y2=450, confidence=0.9, class_id=0)
         assert _classify_detection_zone(d3, 480, cfg) == "danger"
 
     def test_zero_frame_height(self, cfg):
-        """frame_h=0 should return empty string safely."""
         d = Detection(x1=0, y1=0, x2=100, y2=100, confidence=0.9, class_id=0)
         assert _classify_detection_zone(d, 0, cfg) == ""
 
 
-class TestPostprocess:
-    def test_yolov8_format(self):
-        output = np.zeros((1, 84, 2), dtype=np.float32)
-        output[0, 0, 0] = 320
-        output[0, 1, 0] = 320
-        output[0, 2, 0] = 100
-        output[0, 3, 0] = 200
-        output[0, 4, 0] = 0.9
+class TestHailoPreprocess:
+    """HailoBackend._preprocess doesn't require hardware or the hailo_platform module."""
 
-        output[0, 0, 1] = 100
-        output[0, 1, 1] = 100
-        output[0, 2, 1] = 50
-        output[0, 3, 1] = 50
-        output[0, 6, 1] = 0.95  # class 2
+    def _backend(self, input_shape=(640, 640, 3)):
+        b = HailoBackend()
+        b._input_shape = input_shape
+        return b
 
-        dets = _postprocess(output, 0.3, 0.5, person_class_id=0, scale=1.0, pad=(0, 0))
+    def test_output_is_uint8_nhwc(self):
+        frame = np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
+        blob = self._backend()._preprocess(frame)
+        assert blob.dtype == np.uint8
+        assert blob.shape == (1, 640, 640, 3)
+
+    def test_resizes_to_model_input(self):
+        frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+        blob = self._backend(input_shape=(416, 416, 3))._preprocess(frame)
+        assert blob.shape == (1, 416, 416, 3)
+
+    def test_channel_order_bgr_to_rgb(self):
+        # Solid blue BGR frame — channel 0 is B in the source.
+        frame = np.zeros((64, 64, 3), dtype=np.uint8)
+        frame[..., 0] = 255  # B in BGR
+        blob = self._backend(input_shape=(32, 32, 3))._preprocess(frame)
+        # After BGR->RGB, blue sits at channel 2 and channel 0 (R) is zero.
+        assert blob[0, 0, 0, 0] == 0
+        assert blob[0, 0, 0, 2] == 255
+
+
+class TestHailoPostprocess:
+    """Hailo NMS output parsing — shape (1, num_classes, max_boxes, 5).
+
+    Row layout: [y_min, x_min, y_max, x_max, score] in normalized [0, 1] coords,
+    sorted by score descending; trailing zero-filled rows stop iteration.
+    """
+
+    def _backend(self, conf=0.45, person_class=0):
+        b = HailoBackend()
+        b._conf_threshold = conf
+        b._person_class_id = person_class
+        return b
+
+    def test_empty_output_returns_no_detections(self):
+        output = np.zeros((1, 80, 20, 5), dtype=np.float32)
+        dets = self._backend()._postprocess(output, src_h=480, src_w=640)
+        assert dets == []
+
+    def test_scales_normalized_coords_to_source_frame(self):
+        output = np.zeros((1, 80, 20, 5), dtype=np.float32)
+        # [y_min, x_min, y_max, x_max, score]
+        output[0, 0, 0] = [0.1, 0.2, 0.5, 0.6, 0.9]
+        dets = self._backend()._postprocess(output, src_h=480, src_w=640)
         assert len(dets) == 1
-        assert dets[0].class_id == 0
+        d = dets[0]
+        assert d.x1 == pytest.approx(0.2 * 640)
+        assert d.y1 == pytest.approx(0.1 * 480)
+        assert d.x2 == pytest.approx(0.6 * 640)
+        assert d.y2 == pytest.approx(0.5 * 480)
+        assert d.confidence == pytest.approx(0.9)
+        assert d.class_id == 0
 
-    def test_filters_below_threshold(self):
-        output = np.zeros((1, 84, 1), dtype=np.float32)
-        output[0, 0, 0] = 320
-        output[0, 1, 0] = 320
-        output[0, 2, 0] = 100
-        output[0, 3, 0] = 200
-        output[0, 4, 0] = 0.2
+    def test_stops_at_first_below_threshold(self):
+        output = np.zeros((1, 80, 20, 5), dtype=np.float32)
+        output[0, 0, 0] = [0.0, 0.0, 0.2, 0.2, 0.95]
+        output[0, 0, 1] = [0.3, 0.3, 0.5, 0.5, 0.80]
+        output[0, 0, 2] = [0.6, 0.6, 0.8, 0.8, 0.30]  # below threshold -> stops here
+        output[0, 0, 3] = [0.0, 0.0, 0.1, 0.1, 0.99]  # would pass, but we stopped
+        dets = self._backend(conf=0.45)._postprocess(output, src_h=480, src_w=640)
+        assert len(dets) == 2
+        assert all(d.confidence >= 0.45 for d in dets)
 
-        dets = _postprocess(output, 0.3, 0.5, person_class_id=0, scale=1.0, pad=(0, 0))
-        assert len(dets) == 0
+    def test_reads_configured_person_class_slice(self):
+        output = np.zeros((1, 80, 20, 5), dtype=np.float32)
+        # Put a high-score box in class 5 only — class 0 slice is empty.
+        output[0, 5, 0] = [0.1, 0.1, 0.3, 0.3, 0.9]
+        dets_default = self._backend(person_class=0)._postprocess(output, 480, 640)
+        dets_custom = self._backend(person_class=5)._postprocess(output, 480, 640)
+        assert dets_default == []
+        assert len(dets_custom) == 1
+        assert dets_custom[0].class_id == 5
 
-    def test_nx84_layout_with_small_n_is_not_transposed(self):
-        output = np.zeros((1, 2, 84), dtype=np.float32)
-        output[0, 0, 0] = 320
-        output[0, 0, 1] = 320
-        output[0, 0, 2] = 100
-        output[0, 0, 3] = 200
-        output[0, 0, 4] = 0.9
-
-        output[0, 1, 0] = 100
-        output[0, 1, 1] = 100
-        output[0, 1, 2] = 50
-        output[0, 1, 3] = 50
-        output[0, 1, 6] = 0.95
-
-        dets = _postprocess(output, 0.3, 0.5, person_class_id=0, scale=1.0, pad=(0, 0))
-        assert len(dets) == 1
-        assert dets[0].class_id == 0
-
-    def test_nx6_nms_output_format(self):
-        output = np.array(
-            [
-                [10.0, 20.0, 110.0, 220.0, 0.92, 0.0],
-                [30.0, 40.0, 130.0, 240.0, 0.95, 2.0],
-                [50.0, 60.0, 150.0, 260.0, 0.20, 0.0],
-            ],
-            dtype=np.float32,
-        )
-        dets = _postprocess(output, 0.3, 0.5, person_class_id=0, scale=1.0, pad=(0, 0))
-        assert len(dets) == 1
-        assert dets[0].class_id == 0
-        assert dets[0].confidence == pytest.approx(0.92)
-
-
-class TestRuntimeNormalization:
-    def test_openvino_downgrades_on_arm(self):
-        assert _normalize_runtime("openvino", machine="aarch64") == "onnxruntime"
-        assert _normalize_runtime("openvino", machine="armv7l") == "onnxruntime"
-
-    def test_openvino_kept_on_x86(self):
-        assert _normalize_runtime("openvino", machine="x86_64") == "openvino"
-
-    def test_onnxruntime_unchanged(self):
-        assert _normalize_runtime("onnxruntime", machine="aarch64") == "onnxruntime"
+    def test_unexpected_rank_returns_empty(self):
+        output = np.zeros((80, 20, 5), dtype=np.float32)
+        assert self._backend()._postprocess(output, 480, 640) == []

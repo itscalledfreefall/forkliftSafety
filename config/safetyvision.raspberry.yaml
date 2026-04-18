@@ -1,23 +1,18 @@
-# SafetyVision Raspberry Pi Profile
-# Use RTSP camera streams (same camera setup as IPC profile).
+# SafetyVision Raspberry Pi 5 + Hailo-8L profile
+# ───────────────────────────────────────────────
 
 input:
-  mode: rtsp
-  # Detection stream (lower resolution / lower bitrate)
-  rtsp_url: "rtsp://admin:password@192.168.1.108:554/cam/realmonitor?channel=1&subtype=1"
-  # UI preview stream (higher resolution)
-  rtsp_url_main: "rtsp://admin:password@192.168.1.108:554/cam/realmonitor?channel=1&subtype=0"
-  usb_device: "/dev/video0"
+  cameras:
+    - id: back
+      rtsp_url: "rtsp://admin:password@192.168.1.108:554/cam/realmonitor?channel=1&subtype=1"
+      rtsp_url_main: "rtsp://admin:password@192.168.1.108:554/cam/realmonitor?channel=1&subtype=0"
   width: 640
   height: 480
-  fps: 25
+  target_fps: 15
 
 model:
-  path_onnx: "models/yolo26n.onnx"
-  path_openvino: "models/yolo26n_openvino_model/yolo26n.xml"
-  path_pt: "models/yolo26n.pt"
-  runtime: onnxruntime
-  input_size: 512
+  runtime: hailo
+  path_hef: "/usr/share/hailo-models/yolov6n_h8l.hef"
   conf_threshold: 0.50
   iou_threshold: 0.50
   person_class_id: 0
@@ -36,8 +31,9 @@ perf:
   max_queue_size: 1
   capture_cpu_cores: [0]
   inference_cpu_cores: [1, 2, 3]
-  inference_threads: 2
-  temporal_smoothing_frames: 5
+  temporal_smoothing_frames: 3
+  shm_snapshot_dir: "/dev/shm/safetyvision"
+  shm_snapshot_interval_sec: 1.0
 
 logging:
   level: INFO

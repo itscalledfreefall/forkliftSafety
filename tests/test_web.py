@@ -19,12 +19,21 @@ import safetyvision.web.app as web_app
 def _use_tmp_config(tmp_path, monkeypatch):
     """Point web app at a temp config for each test."""
     cfg = {
-        "input": {"mode": "usb", "usb_device": "/dev/video0"},
+        "input": {
+            "cameras": [
+                {
+                    "id": "back",
+                    "rtsp_url": "rtsp://cam:554/sub",
+                    "rtsp_url_main": "rtsp://cam:554/main",
+                }
+            ],
+            "width": 640,
+            "height": 480,
+            "target_fps": 15,
+        },
         "model": {
-            "path_onnx": "models/yolo26n.onnx",
-            "path_openvino": "models/yolo26n_openvino_model/yolo26n.xml",
-            "path_pt": "models/yolo26n.pt",
-            "runtime": "onnxruntime",
+            "runtime": "hailo",
+            "path_hef": "/usr/share/hailo-models/yolov6n_h8l.hef",
             "conf_threshold": 0.45,
             "iou_threshold": 0.50,
         },

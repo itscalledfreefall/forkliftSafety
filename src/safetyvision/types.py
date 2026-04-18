@@ -5,7 +5,6 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Optional
 
 import numpy as np
 
@@ -16,7 +15,7 @@ class FramePacket:
 
     frame: np.ndarray
     timestamp_ns: int = field(default_factory=time.time_ns)
-    source_id: str = ""
+    camera_id: str = ""
     seq: int = 0
 
 
@@ -33,18 +32,19 @@ class DetectionEvent:
     confidence_max: float
     bbox_count: int
     zone_level: str = ""          # "danger" | "medium" | ""
-    source_id: str = ""
+    camera_id: str = ""
 
 
 @dataclass(slots=True)
 class AlertEvent:
-    """Issued when the alert worker acts on a detection."""
+    """Issued when the decision worker acts on a detection."""
 
     timestamp_ns: int
     trigger_reason: str
     cooldown_active: bool
     sound_key: str = "danger"
     audio_started_ms: float = 0.0
+    camera_id: str = ""
 
 
 class AlertState(Enum):

@@ -1,135 +1,170 @@
-"""Tests for configuration loading and validation."""
-
-from pathlib import Path
+"""Tests for configuration loading and validation (Hailo-only schema)."""
 
 import pytest
 import yaml
 
-from safetyvision.config import ConfigError, SafetyVisionConfig, load_config, validate
+from safetyvision.config import (
+    CameraConfig,
+    ConfigError,
+    SafetyVisionConfig,
+    load_config,
+    validate,
+)
+
+
+def _valid_cfg() -> SafetyVisionConfig:
+    """A minimally-valid config for mutation tests."""
+    cfg = SafetyVisionConfig()
+    cfg.input.cameras = [CameraConfig(id="back", rtsp_url="rtsp://cam:554/live")]
+    return cfg
 
 
 class TestLoadConfig:
-    def test_defaults_when_no_file(self, tmp_path):
-        cfg = load_config(tmp_path / "nonexistent.yaml")
-        assert cfg.input.mode == "usb"
-        assert cfg.model.runtime == "onnxruntime"
-        assert cfg.model.conf_threshold == 0.45
-        assert cfg.perf.max_queue_size == 1
-
-    def test_loads_yaml(self, tmp_path):
+    def test_loads_yaml_with_cameras_list(self, tmp_path):
         data = {
-            "input": {"mode": "rtsp", "rtsp_url": "rtsp://cam:554/live"},
-            "model": {"conf_threshold": 0.6},
-            "alert": {"repeat_interval_sec": 10.0},
+            "input": {
+                "cameras": [
+                    {
+                        "id": "back",
+                        "rtsp_url": "rtsp://cam:554/sub",
+                        "rtsp_url_main": "rtsp://cam:554/main",
+                    }
+                ],
+                "target_fps": 20,
+            },
+            "model": {
+                "runtime": "hailo",
+                "path_hef": "/usr/share/hailo-models/yolov6n_h8l.hef",
+                "conf_threshold": 0.6,
+            },
+            "alert": {"repeat_interval_sec": 2.0},
         }
         p = tmp_path / "test.yaml"
         p.write_text(yaml.dump(data))
         cfg = load_config(p)
-        assert cfg.input.mode == "rtsp"
-        assert cfg.input.rtsp_url == "rtsp://cam:554/live"
+        assert len(cfg.input.cameras) == 1
+        assert cfg.input.cameras[0].id == "back"
+        assert cfg.input.cameras[0].rtsp_url == "rtsp://cam:554/sub"
+        assert cfg.input.cameras[0].rtsp_url_main == "rtsp://cam:554/main"
+        assert cfg.input.target_fps == 20
         assert cfg.model.conf_threshold == 0.6
-        assert cfg.alert.repeat_interval_sec == 10.0
+        assert cfg.alert.repeat_interval_sec == 2.0
 
-    def test_ignores_unknown_keys(self, tmp_path):
-        data = {"input": {"mode": "usb", "unknown_key": "value"}}
+    def test_loads_multiple_cameras(self, tmp_path):
+        data = {
+            "input": {
+                "cameras": [
+                    {"id": "back", "rtsp_url": "rtsp://a:554/live"},
+                    {"id": "front", "rtsp_url": "rtsp://b:554/live"},
+                ]
+            },
+        }
         p = tmp_path / "test.yaml"
         p.write_text(yaml.dump(data))
         cfg = load_config(p)
-        assert cfg.input.mode == "usb"
+        assert [c.id for c in cfg.input.cameras] == ["back", "front"]
+
+    def test_ignores_unknown_keys(self, tmp_path):
+        data = {
+            "input": {
+                "cameras": [{"id": "back", "rtsp_url": "rtsp://x/y", "extra": "value"}],
+                "unknown_key": "value",
+            },
+        }
+        p = tmp_path / "test.yaml"
+        p.write_text(yaml.dump(data))
+        cfg = load_config(p)
+        assert cfg.input.cameras[0].id == "back"
 
 
 class TestValidation:
-    def test_invalid_mode(self):
+    def test_empty_cameras_list_rejected(self):
         cfg = SafetyVisionConfig()
-        cfg.input.mode = "invalid"
-        with pytest.raises(ConfigError, match="input.mode"):
+        with pytest.raises(ConfigError, match="cameras"):
             validate(cfg)
 
-    def test_rtsp_requires_url(self):
+    def test_camera_requires_rtsp_url(self):
         cfg = SafetyVisionConfig()
-        cfg.input.mode = "rtsp"
-        cfg.input.rtsp_url = ""
+        cfg.input.cameras = [CameraConfig(id="back", rtsp_url="")]
         with pytest.raises(ConfigError, match="rtsp_url"):
             validate(cfg)
 
-    def test_invalid_runtime(self):
+    def test_camera_requires_id(self):
         cfg = SafetyVisionConfig()
-        cfg.model.runtime = "tensorrt"
+        cfg.input.cameras = [CameraConfig(id="", rtsp_url="rtsp://x/y")]
+        with pytest.raises(ConfigError, match="id"):
+            validate(cfg)
+
+    def test_duplicate_camera_ids_rejected(self):
+        cfg = SafetyVisionConfig()
+        cfg.input.cameras = [
+            CameraConfig(id="back", rtsp_url="rtsp://a/1"),
+            CameraConfig(id="back", rtsp_url="rtsp://b/1"),
+        ]
+        with pytest.raises(ConfigError, match="duplicate camera id"):
+            validate(cfg)
+
+    def test_runtime_must_be_hailo(self):
+        cfg = _valid_cfg()
+        cfg.model.runtime = "onnxruntime"
         with pytest.raises(ConfigError, match="model.runtime"):
             validate(cfg)
 
-    def test_onnxruntime_requires_onnx_path(self):
-        cfg = SafetyVisionConfig()
-        cfg.model.runtime = "onnxruntime"
-        cfg.model.path_onnx = ""
-        with pytest.raises(ConfigError, match="path_onnx"):
-            validate(cfg)
-
-    def test_openvino_requires_some_model_path(self):
-        cfg = SafetyVisionConfig()
-        cfg.model.runtime = "openvino"
-        cfg.model.path_onnx = ""
-        cfg.model.path_openvino = ""
-        with pytest.raises(ConfigError, match="path_openvino"):
-            validate(cfg)
-
-    def test_ultralytics_requires_pt_path(self):
-        cfg = SafetyVisionConfig()
-        cfg.model.runtime = "ultralytics"
-        cfg.model.path_pt = ""
-        with pytest.raises(ConfigError, match="path_pt"):
+    def test_path_hef_required(self):
+        cfg = _valid_cfg()
+        cfg.model.path_hef = ""
+        with pytest.raises(ConfigError, match="path_hef"):
             validate(cfg)
 
     def test_conf_threshold_range(self):
-        cfg = SafetyVisionConfig()
+        cfg = _valid_cfg()
         cfg.model.conf_threshold = 1.5
         with pytest.raises(ConfigError, match="conf_threshold"):
             validate(cfg)
 
     def test_zero_repeat_interval(self):
-        cfg = SafetyVisionConfig()
+        cfg = _valid_cfg()
         cfg.alert.repeat_interval_sec = 0
         with pytest.raises(ConfigError, match="repeat_interval"):
             validate(cfg)
 
     def test_yellow_start_y_out_of_range(self):
-        cfg = SafetyVisionConfig()
+        cfg = _valid_cfg()
         cfg.alert.yellow_start_y = 0.0
         with pytest.raises(ConfigError, match="yellow_start_y"):
             validate(cfg)
 
     def test_red_start_y_out_of_range(self):
-        cfg = SafetyVisionConfig()
+        cfg = _valid_cfg()
         cfg.alert.red_start_y = 1.0
         with pytest.raises(ConfigError, match="red_start_y"):
             validate(cfg)
 
     def test_yellow_must_be_less_than_red(self):
-        cfg = SafetyVisionConfig()
+        cfg = _valid_cfg()
         cfg.alert.yellow_start_y = 0.70
         cfg.alert.red_start_y = 0.50
         with pytest.raises(ConfigError, match="yellow_start_y.*less than.*red_start_y"):
             validate(cfg)
 
     def test_equal_cut_lines_invalid(self):
-        cfg = SafetyVisionConfig()
+        cfg = _valid_cfg()
         cfg.alert.yellow_start_y = 0.50
         cfg.alert.red_start_y = 0.50
         with pytest.raises(ConfigError, match="yellow_start_y"):
             validate(cfg)
 
     def test_invalid_min_alert_confidence(self):
-        cfg = SafetyVisionConfig()
+        cfg = _valid_cfg()
         cfg.alert.min_alert_confidence = 1.2
         with pytest.raises(ConfigError, match="min_alert_confidence"):
             validate(cfg)
 
     def test_valid_config_passes(self):
-        cfg = SafetyVisionConfig()
-        validate(cfg)  # should not raise
+        validate(_valid_cfg())
 
     def test_custom_band_lines(self):
-        cfg = SafetyVisionConfig()
+        cfg = _valid_cfg()
         cfg.alert.yellow_start_y = 0.40
         cfg.alert.red_start_y = 0.75
-        validate(cfg)  # should not raise
+        validate(cfg)

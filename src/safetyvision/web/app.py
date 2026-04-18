@@ -400,28 +400,33 @@ _stream_lock = threading.Lock()
 _stream_thread: Optional[threading.Thread] = None
 
 
-def _open_stream_camera() -> cv2.VideoCapture:
-    """Open camera for the web UI live view with low-latency settings.
+def _preview_urls() -> list[str]:
+    """Return RTSP URLs to try for the preview stream, preferring main streams."""
+    raw = _load_raw_config()
+    cameras = raw.get("input", {}).get("cameras") or []
+    mains: list[str] = []
+    subs: list[str] = []
+    for cam in cameras:
+        if not isinstance(cam, dict):
+            continue
+        if cam.get("rtsp_url_main"):
+            mains.append(cam["rtsp_url_main"])
+        if cam.get("rtsp_url"):
+            subs.append(cam["rtsp_url"])
+    return mains + subs
 
-    Uses the main stream (rtsp_url_main) for higher resolution preview.
-    Falls back to sub stream (rtsp_url) or USB if main stream unavailable.
-    """
+
+def _open_stream_camera() -> cv2.VideoCapture:
+    """Open an RTSP stream for the web UI preview (first camera, main if available)."""
     raw = _load_raw_config()
     inp = raw.get("input", {})
-    mode = inp.get("mode", "usb")
-    dev = inp.get("usb_device", "/dev/video0")
-    rtsp_main = inp.get("rtsp_url_main", "")
-    rtsp_sub = inp.get("rtsp_url", "")
     width = int(inp.get("width", 640))
     height = int(inp.get("height", 480))
-    fps = int(inp.get("fps", 25))
+    fps = int(inp.get("target_fps", 15))
 
-    # For RTSP: prefer main stream, then sub stream.
-    for url in ([rtsp_main, rtsp_sub] if mode in ("rtsp", "auto") else []):
-        if not url:
-            continue
+    for url in _preview_urls():
         transports = [WEB_RTSP_TRANSPORT, "tcp", "udp"]
-        tried = set()
+        tried: set[str] = set()
         for transport in transports:
             if transport in tried:
                 continue
@@ -437,16 +442,6 @@ def _open_stream_camera() -> cv2.VideoCapture:
             cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
             if cap.isOpened():
                 return cap
-
-    # USB
-    if mode in ("usb", "auto") and os.path.exists(dev):
-        cap = cv2.VideoCapture(dev, cv2.CAP_V4L2)
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
-        cap.set(cv2.CAP_PROP_FPS, fps)
-        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-        if cap.isOpened():
-            return cap
 
     return cv2.VideoCapture()
 
@@ -580,12 +575,12 @@ async def stream(request: Request):
 # ---------------------------------------------------------------------------
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
+    return templates.TemplateResponse(request, "index.html")
 
 
 @app.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request):
-    return templates.TemplateResponse("login.html", {"request": request})
+    return templates.TemplateResponse(request, "login.html")
 
 
 # ---------------------------------------------------------------------------
@@ -604,14 +599,27 @@ def _build_config_with_overrides(overrides: dict) -> SafetyVisionConfig:
 
     Does NOT validate — caller is responsible for calling validate().
     """
-    from safetyvision.config import _merge, InputConfig, ModelConfig, AlertConfig, PerfConfig, LoggingConfig, HealthConfig
+    from safetyvision.config import (
+        AlertConfig,
+        HealthConfig,
+        InputConfig,
+        LoggingConfig,
+        ModelConfig,
+        PerfConfig,
+        _merge,
+        _parse_cameras,
+    )
 
     raw = _load_raw_config()
     for section, values in overrides.items():
         raw.setdefault(section, {}).update(values)
 
+    raw_input = raw.get("input") or {}
+    input_cfg = _merge(InputConfig, raw_input)
+    input_cfg.cameras = _parse_cameras(raw_input)
+
     return SafetyVisionConfig(
-        input=_merge(InputConfig, raw.get("input")),
+        input=input_cfg,
         model=_merge(ModelConfig, raw.get("model")),
         alert=_merge(AlertConfig, raw.get("alert")),
         perf=_merge(PerfConfig, raw.get("perf")),

@@ -1,109 +1,62 @@
-"""Capture worker – grabs frames from RTSP or USB with minimal latency."""
+"""Capture worker – one per camera. RTSP via GStreamer, tagged FramePackets."""
 
 from __future__ import annotations
 
 import os
 import threading
 import time
+from pathlib import Path
 from queue import Full, Queue
 from typing import Optional
 
 import cv2
-import numpy as np
 from loguru import logger
 
-from safetyvision.config import SafetyVisionConfig
+from safetyvision.config import CameraConfig, SafetyVisionConfig
 from safetyvision.types import FramePacket
 
 
 def _pin_to_cores(cores: list[int]) -> None:
-    """Best-effort CPU affinity pinning (Linux only)."""
     try:
         os.sched_setaffinity(0, set(cores))
-        logger.debug("Capture thread pinned to cores {}", cores)
     except (AttributeError, OSError):
         logger.warning("CPU pinning unavailable on this platform")
 
 
-def _build_gst_pipeline(cfg: SafetyVisionConfig) -> str:
-    """Build a GStreamer pipeline string for low-latency RTSP capture."""
+def _build_gst_pipeline(url: str, width: int, height: int) -> str:
     return (
-        f"rtspsrc location={cfg.input.rtsp_url} protocols=tcp latency=50 drop-on-latency=true "
+        f"rtspsrc location={url} protocols=tcp latency=50 drop-on-latency=true "
         f"! decodebin ! videoconvert "
-        f"! video/x-raw,width={cfg.input.width},height={cfg.input.height} "
+        f"! video/x-raw,width={width},height={height} "
         f"! appsink sync=false max-buffers=1 drop=true"
     )
 
 
-def _open_usb(cfg: SafetyVisionConfig) -> cv2.VideoCapture:
-    """Open a USB/V4L2 camera with explicit settings."""
-    cap = cv2.VideoCapture(cfg.input.usb_device, cv2.CAP_V4L2)
-    cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"YUYV"))
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, cfg.input.width)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, cfg.input.height)
-    cap.set(cv2.CAP_PROP_FPS, cfg.input.fps)
+def _open_rtsp(url: str, width: int, height: int, fps: int) -> cv2.VideoCapture:
+    gst = _build_gst_pipeline(url, width, height)
+    cap = cv2.VideoCapture(gst, cv2.CAP_GSTREAMER)
+    if cap.isOpened():
+        return cap
+    logger.warning("GStreamer open failed for {}, falling back to FFmpeg", url)
+    os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = (
+        "rtsp_transport;tcp|fflags;nobuffer|flags;low_delay|framedrop;1|"
+        "probesize;32|analyzeduration;0"
+    )
+    cap = cv2.VideoCapture(url, cv2.CAP_FFMPEG)
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+    cap.set(cv2.CAP_PROP_FPS, fps)
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
     return cap
 
 
-def _open_rtsp(cfg: SafetyVisionConfig) -> cv2.VideoCapture:
-    """Open an RTSP stream via GStreamer pipeline."""
-    gst = _build_gst_pipeline(cfg)
-    cap = cv2.VideoCapture(gst, cv2.CAP_GSTREAMER)
-    if not cap.isOpened():
-        logger.warning("GStreamer RTSP failed, falling back to FFmpeg backend")
-        os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = (
-            "rtsp_transport;tcp|fflags;nobuffer|flags;low_delay|framedrop;1|probesize;32|analyzeduration;0"
-        )
-        cap = cv2.VideoCapture(cfg.input.rtsp_url, cv2.CAP_FFMPEG)
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, cfg.input.width)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, cfg.input.height)
-        cap.set(cv2.CAP_PROP_FPS, cfg.input.fps)
-        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-    return cap
-
-
-def _detect_camera(cfg: SafetyVisionConfig) -> tuple[cv2.VideoCapture, str]:
-    """Auto-detect which camera is available.
-
-    Tries USB first (lower latency), then RTSP.
-    Returns (capture, source_id) where source_id is 'usb' or 'rtsp'.
-    """
-    # Try USB capture card
-    usb_dev = cfg.input.usb_device
-    if os.path.exists(usb_dev):
-        logger.info("Auto-detect: USB device {} found, trying...", usb_dev)
-        cap = _open_usb(cfg)
-        if cap.isOpened():
-            ret, frame = cap.read()
-            if ret and frame is not None:
-                logger.info("Auto-detect: USB camera active at {}", usb_dev)
-                return cap, "usb"
-            cap.release()
-        logger.info("Auto-detect: USB device exists but not readable")
-
-    # Try RTSP
-    if cfg.input.rtsp_url:
-        logger.info("Auto-detect: Trying RTSP at {}", cfg.input.rtsp_url)
-        cap = _open_rtsp(cfg)
-        if cap.isOpened():
-            ret, frame = cap.read()
-            if ret and frame is not None:
-                logger.info("Auto-detect: RTSP camera active at {}", cfg.input.rtsp_url)
-                return cap, "rtsp"
-            cap.release()
-        logger.info("Auto-detect: RTSP not available")
-
-    logger.error("Auto-detect: No camera found (USB={}, RTSP={})", usb_dev, cfg.input.rtsp_url)
-    return cv2.VideoCapture(), "none"
-
-
 class CaptureWorker:
-    """Continuously captures frames and pushes the latest to a bounded queue."""
+    """Continuously captures frames from a single RTSP camera."""
 
     def __init__(
         self,
         cfg: SafetyVisionConfig,
+        camera: CameraConfig,
         out_queue: Queue,
         stop_event: threading.Event,
         latency_cb=None,
@@ -111,17 +64,30 @@ class CaptureWorker:
         drop_cb=None,
     ):
         self._cfg = cfg
+        self._camera = camera
         self._out_queue = out_queue
         self._stop = stop_event
         self._latency_cb = latency_cb
         self._frame_cb = frame_cb
         self._drop_cb = drop_cb
         self._cap: Optional[cv2.VideoCapture] = None
-        self._active_source: str = ""
         self._thread: Optional[threading.Thread] = None
         self._seq = 0
         self._frames_dropped = 0
         self._connected = threading.Event()
+
+        self._snapshot_dir = Path(cfg.perf.shm_snapshot_dir)
+        self._snapshot_path = self._snapshot_dir / f"frame_{camera.id}.jpg"
+        self._snapshot_interval_ns = int(cfg.perf.shm_snapshot_interval_sec * 1e9)
+        self._last_snapshot_ns = 0
+        try:
+            self._snapshot_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            logger.warning("Cannot create snapshot dir {}: {}", self._snapshot_dir, e)
+
+    @property
+    def camera_id(self) -> str:
+        return self._camera.id
 
     @property
     def is_connected(self) -> bool:
@@ -133,7 +99,9 @@ class CaptureWorker:
 
     def start(self) -> None:
         self._thread = threading.Thread(
-            target=self._run, name="capture_worker", daemon=True
+            target=self._run,
+            name=f"capture_{self._camera.id}",
+            daemon=True,
         )
         self._thread.start()
 
@@ -142,48 +110,54 @@ class CaptureWorker:
         if self._thread:
             self._thread.join(timeout=5.0)
 
-    def _open_camera(self) -> cv2.VideoCapture:
-        if self._cfg.input.mode == "auto":
-            cap, source = _detect_camera(self._cfg)
-            self._active_source = source
-            return cap
-        if self._cfg.input.mode == "rtsp":
-            self._active_source = "rtsp"
-            return _open_rtsp(self._cfg)
-        self._active_source = "usb"
-        return _open_usb(self._cfg)
+    def _open(self) -> cv2.VideoCapture:
+        return _open_rtsp(
+            self._camera.rtsp_url,
+            self._cfg.input.width,
+            self._cfg.input.height,
+            self._cfg.input.target_fps,
+        )
 
     def _reconnect(self) -> None:
-        """Reconnect with exponential backoff."""
         self._connected.clear()
-        if self._cap:
+        if self._cap is not None:
             self._cap.release()
             self._cap = None
 
         backoff = 1.0
         max_backoff = self._cfg.health.camera_reconnect_max_backoff_sec
         while not self._stop.is_set():
-            logger.info("Attempting camera reconnect (backoff={:.1f}s)", backoff)
+            logger.info(
+                "[{}] Reconnecting RTSP (backoff={:.1f}s)", self._camera.id, backoff
+            )
             try:
-                self._cap = self._open_camera()
+                self._cap = self._open()
                 if self._cap.isOpened():
                     self._connected.set()
-                    logger.info("Camera reconnected")
+                    logger.info("[{}] Camera connected", self._camera.id)
                     return
             except Exception as e:
-                logger.error("Reconnect failed: {}", e)
+                logger.error("[{}] Reconnect error: {}", self._camera.id, e)
             self._stop.wait(backoff)
             backoff = min(backoff * 2, max_backoff)
+
+    def _maybe_write_snapshot(self, frame, now_ns: int) -> None:
+        if now_ns - self._last_snapshot_ns < self._snapshot_interval_ns:
+            return
+        self._last_snapshot_ns = now_ns
+        try:
+            cv2.imwrite(str(self._snapshot_path), frame, [int(cv2.IMWRITE_JPEG_QUALITY), 60])
+        except Exception as e:
+            logger.debug("[{}] Snapshot write failed: {}", self._camera.id, e)
 
     def _run(self) -> None:
         _pin_to_cores(self._cfg.perf.capture_cpu_cores)
 
-        self._cap = self._open_camera()
+        self._cap = self._open()
         if not self._cap.isOpened():
-            logger.error("Initial camera open failed, entering reconnect loop")
+            logger.error("[{}] Initial open failed, entering reconnect loop", self._camera.id)
             self._reconnect()
-
-        if self._cap and self._cap.isOpened():
+        else:
             self._connected.set()
 
         while not self._stop.is_set():
@@ -197,23 +171,22 @@ class CaptureWorker:
             ret, frame = self._cap.read()
             t1 = time.time_ns()
             if not ret or frame is None:
-                logger.warning("Frame read failed, reconnecting")
+                logger.warning("[{}] Frame read failed, reconnecting", self._camera.id)
                 self._reconnect()
                 continue
+
             if self._latency_cb:
                 self._latency_cb((t1 - t0) / 1e6)
 
-            ts = time.time_ns()
             self._seq += 1
             pkt = FramePacket(
                 frame=frame,
-                timestamp_ns=ts,
-                source_id=self._active_source or self._cfg.input.mode,
+                timestamp_ns=time.time_ns(),
+                camera_id=self._camera.id,
                 seq=self._seq,
             )
 
             try:
-                # Non-blocking put: drop oldest if full
                 while not self._out_queue.empty():
                     try:
                         self._out_queue.get_nowait()
@@ -230,6 +203,12 @@ class CaptureWorker:
                 if self._drop_cb:
                     self._drop_cb()
 
-        if self._cap:
+            self._maybe_write_snapshot(frame, pkt.timestamp_ns)
+
+        if self._cap is not None:
             self._cap.release()
-            logger.info("Capture worker stopped (dropped {} frames)", self._frames_dropped)
+            logger.info(
+                "[{}] Capture stopped (dropped {} frames)",
+                self._camera.id,
+                self._frames_dropped,
+            )

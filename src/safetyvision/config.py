@@ -5,29 +5,36 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional
+from typing import List
 
 import yaml
 
 
 @dataclass
+class CameraConfig:
+    """A single RTSP camera source feeding the detection pipeline."""
+
+    id: str = "default"
+    rtsp_url: str = ""
+    rtsp_url_main: str = ""  # optional high-res preview for the web UI
+
+
+@dataclass
 class InputConfig:
-    mode: str = "usb"
-    rtsp_url: str = ""           # sub stream for detection
-    rtsp_url_main: str = ""      # main stream for web UI live view
-    usb_device: str = "/dev/video0"
+    """Capture-side settings. RTSP-only; Hailo target has no USB path."""
+
+    cameras: List[CameraConfig] = field(default_factory=list)
     width: int = 640
     height: int = 480
-    fps: int = 25
+    target_fps: int = 15
 
 
 @dataclass
 class ModelConfig:
-    path_onnx: str = "models/yolo26n.onnx"
-    path_openvino: str = "models/yolo26n_openvino_model/yolo26n.xml"
-    path_pt: str = "models/yolo26n.pt"
-    runtime: str = "onnxruntime"
-    input_size: int = 512
+    """Hailo-only inference configuration."""
+
+    runtime: str = "hailo"
+    path_hef: str = "/usr/share/hailo-models/yolov6n_h8l.hef"
     conf_threshold: float = 0.45
     iou_threshold: float = 0.50
     person_class_id: int = 0
@@ -38,9 +45,6 @@ class AlertConfig:
     siren_wav: str = "assets/audio/siren.wav"
     voice_wav: str = "assets/audio/warning_voice.wav"
     # Horizontal band zone cut lines (normalized Y, 0=top, 1=bottom).
-    # 0.0 .. yellow_start_y  = green  (no sound)
-    # yellow_start_y .. red_start_y = yellow (medium sound)
-    # red_start_y .. 1.0     = red    (danger sound)
     yellow_start_y: float = 0.33
     red_start_y: float = 0.66
     min_alert_confidence: float = 0.60
@@ -54,8 +58,9 @@ class PerfConfig:
     max_queue_size: int = 1
     capture_cpu_cores: List[int] = field(default_factory=lambda: [0])
     inference_cpu_cores: List[int] = field(default_factory=lambda: [1, 2, 3])
-    inference_threads: int = 4
     temporal_smoothing_frames: int = 3
+    shm_snapshot_dir: str = "/dev/shm/safetyvision"
+    shm_snapshot_interval_sec: float = 1.0
 
 
 @dataclass
@@ -90,11 +95,18 @@ def _merge(dc_class, data: dict):
     return dc_class(**{k: v for k, v in data.items() if k in valid})
 
 
-def load_config(path: str | Path | None = None) -> SafetyVisionConfig:
-    """Load and validate configuration from YAML file.
+def _parse_cameras(raw_input: dict) -> List[CameraConfig]:
+    raw_list = raw_input.get("cameras") or []
+    cams: List[CameraConfig] = []
+    for entry in raw_list:
+        if not isinstance(entry, dict):
+            continue
+        cams.append(_merge(CameraConfig, entry))
+    return cams
 
-    Falls back to defaults when *path* is None or the file is missing.
-    """
+
+def load_config(path: str | Path | None = None) -> SafetyVisionConfig:
+    """Load and validate configuration from YAML file."""
     if path is None:
         path = os.environ.get("SAFETYVISION_CONFIG", "config/safetyvision.yaml")
     path = Path(path)
@@ -104,8 +116,12 @@ def load_config(path: str | Path | None = None) -> SafetyVisionConfig:
         with open(path) as f:
             raw = yaml.safe_load(f) or {}
 
+    raw_input = raw.get("input") or {}
+    input_cfg = _merge(InputConfig, raw_input)
+    input_cfg.cameras = _parse_cameras(raw_input)
+
     cfg = SafetyVisionConfig(
-        input=_merge(InputConfig, raw.get("input")),
+        input=input_cfg,
         model=_merge(ModelConfig, raw.get("model")),
         alert=_merge(AlertConfig, raw.get("alert")),
         perf=_merge(PerfConfig, raw.get("perf")),
@@ -122,36 +138,37 @@ class ConfigError(ValueError):
 
 def validate(cfg: SafetyVisionConfig) -> None:
     """Raise ConfigError on invalid values."""
-    if cfg.input.mode not in ("rtsp", "usb", "auto"):
-        raise ConfigError(f"input.mode must be 'rtsp', 'usb', or 'auto', got '{cfg.input.mode}'")
-    if cfg.input.mode == "rtsp" and not cfg.input.rtsp_url:
-        raise ConfigError("input.rtsp_url is required when mode is 'rtsp'")
-    if cfg.model.runtime not in ("onnxruntime", "openvino", "ultralytics"):
+    if not cfg.input.cameras:
+        raise ConfigError("input.cameras must contain at least one entry")
+
+    ids: set[str] = set()
+    for cam in cfg.input.cameras:
+        if not cam.id:
+            raise ConfigError("camera entries require a non-empty 'id'")
+        if cam.id in ids:
+            raise ConfigError(f"duplicate camera id: '{cam.id}'")
+        ids.add(cam.id)
+        if not cam.rtsp_url:
+            raise ConfigError(f"camera '{cam.id}' requires rtsp_url")
+
+    if cfg.model.runtime != "hailo":
         raise ConfigError(
-            "model.runtime must be 'onnxruntime', 'openvino', or 'ultralytics', "
-            f"got '{cfg.model.runtime}'"
+            f"model.runtime must be 'hailo' (CPU runtimes removed), got '{cfg.model.runtime}'"
         )
-    if cfg.model.runtime == "onnxruntime" and not cfg.model.path_onnx:
-        raise ConfigError("model.path_onnx is required when runtime is 'onnxruntime'")
-    if cfg.model.runtime == "openvino" and not (cfg.model.path_openvino or cfg.model.path_onnx):
-        raise ConfigError(
-            "model.path_openvino or model.path_onnx is required when runtime is 'openvino'"
-        )
-    if cfg.model.runtime == "ultralytics" and not cfg.model.path_pt:
-        raise ConfigError("model.path_pt is required when runtime is 'ultralytics'")
+    if not cfg.model.path_hef:
+        raise ConfigError("model.path_hef is required")
+
     if not 0.0 < cfg.model.conf_threshold < 1.0:
         raise ConfigError("model.conf_threshold must be between 0 and 1")
     if not 0.0 < cfg.model.iou_threshold < 1.0:
         raise ConfigError("model.iou_threshold must be between 0 and 1")
-    # Zone band cut lines
+
     if not 0.0 < cfg.alert.yellow_start_y < 1.0:
         raise ConfigError("alert.yellow_start_y must be between 0 and 1")
     if not 0.0 < cfg.alert.red_start_y < 1.0:
         raise ConfigError("alert.red_start_y must be between 0 and 1")
     if cfg.alert.yellow_start_y >= cfg.alert.red_start_y:
-        raise ConfigError(
-            "alert.yellow_start_y must be less than alert.red_start_y"
-        )
+        raise ConfigError("alert.yellow_start_y must be less than alert.red_start_y")
     if not 0.0 < cfg.alert.min_alert_confidence < 1.0:
         raise ConfigError("alert.min_alert_confidence must be between 0 and 1")
     if cfg.alert.repeat_interval_sec <= 0:
