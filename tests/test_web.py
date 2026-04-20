@@ -1,8 +1,5 @@
 """Tests for SafetyVision Web UI API."""
 
-import shutil
-from pathlib import Path
-
 import pytest
 import yaml
 
@@ -11,7 +8,7 @@ pytest.importorskip("fastapi")
 pytest.importorskip("httpx")
 
 from httpx import ASGITransport, AsyncClient
-from safetyvision.web.app import app, CONFIG_PATH, SESSION_TOKENS, ADMIN_PASS_HASH
+from safetyvision.web.app import app, SESSION_TOKENS
 import safetyvision.web.app as web_app
 
 
@@ -25,6 +22,16 @@ def _use_tmp_config(tmp_path, monkeypatch):
                     "id": "back",
                     "rtsp_url": "rtsp://cam:554/sub",
                     "rtsp_url_main": "rtsp://cam:554/main",
+                    "mode": "zone",
+                    "zone": {
+                        "yellow_start_y": 0.34,
+                        "red_start_y": 0.68,
+                    },
+                    "distance": {
+                        "warning_distance_m": 2.0,
+                        "danger_distance_m": 1.0,
+                        "calibration_path": "config/calibration/back.yaml",
+                    },
                 }
             ],
             "width": 640,
@@ -105,6 +112,20 @@ async def test_get_config(auth_cookies):
 
 
 @pytest.mark.asyncio
+async def test_get_camera_configs(auth_cookies):
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test", cookies=auth_cookies) as ac:
+        res = await ac.get("/api/config/cameras")
+        assert res.status_code == 200
+        data = res.json()
+        assert len(data) == 1
+        assert data[0]["id"] == "back"
+        assert data[0]["mode"] == "zone"
+        assert data[0]["effective_zone"]["yellow_start_y"] == 0.34
+        assert data[0]["distance"]["calibration_path"] == "config/calibration/back.yaml"
+
+
+@pytest.mark.asyncio
 async def test_save_zones_valid(auth_cookies):
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test", cookies=auth_cookies) as ac:
@@ -163,6 +184,50 @@ async def test_save_timing_invalid(auth_cookies):
             "repeat_interval_sec": 0,
             "min_clear_sec": 3.0,
             "min_alert_confidence": 0.55,
+        })
+        assert res.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_save_camera_config(auth_cookies):
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test", cookies=auth_cookies) as ac:
+        res = await ac.post("/api/config/cameras/back", json={
+            "mode": "distance",
+            "zone": {
+                "yellow_start_y": 0.22,
+                "red_start_y": 0.60,
+            },
+            "distance": {
+                "warning_distance_m": 3.0,
+                "danger_distance_m": 1.5,
+                "calibration_path": "config/calibration/rear.yaml",
+            },
+        })
+        assert res.status_code == 200
+        payload = res.json()
+        assert payload["ok"] is True
+        assert payload["camera"]["mode"] == "distance"
+
+        res2 = await ac.get("/api/config")
+        saved = res2.json()["input"]["cameras"][0]
+        assert saved["mode"] == "distance"
+        assert saved["zone"]["yellow_start_y"] == 0.22
+        assert saved["distance"]["warning_distance_m"] == 3.0
+        assert saved["distance"]["calibration_path"] == "config/calibration/rear.yaml"
+
+
+@pytest.mark.asyncio
+async def test_save_camera_config_invalid_distance_thresholds(auth_cookies):
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test", cookies=auth_cookies) as ac:
+        res = await ac.post("/api/config/cameras/back", json={
+            "mode": "distance",
+            "distance": {
+                "warning_distance_m": 1.0,
+                "danger_distance_m": 1.0,
+                "calibration_path": "config/calibration/rear.yaml",
+            },
         })
         assert res.status_code == 400
 

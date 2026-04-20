@@ -28,6 +28,7 @@
     <!-- Tabs -->
     <nav class="tabs">
       <button class="tab active" data-tab="dashboard">Dashboard</button>
+      <button class="tab" data-tab="cameras">Camera Settings</button>
       <button class="tab" data-tab="zones">Zone Settings</button>
       <button class="tab" data-tab="timing">Audio / Timing</button>
     </nav>
@@ -59,10 +60,17 @@
       </div>
     </section>
 
+    <!-- Camera Settings Tab -->
+    <section id="tab-cameras" class="tab-content">
+      <h2>Camera Modes</h2>
+      <p class="help-text">Choose per-camera behavior. Zone mode uses the existing top-view thresholds. Distance mode is stored now so you can configure the rear camera in the dashboard, and the metric distance logic can be added on top next.</p>
+      <div id="cameraCards" class="camera-cards"></div>
+    </section>
+
     <!-- Zone Settings Tab -->
     <section id="tab-zones" class="tab-content">
       <h2>Zone Cut Lines</h2>
-      <p class="help-text">Adjust the horizontal boundaries between green (safe), yellow (medium alert), and red (danger alert) zones.</p>
+      <p class="help-text">Adjust the global default zone boundaries. Cameras in zone mode can override these values individually from the Camera Settings tab.</p>
 
       <div class="zone-editor">
         <div class="zone-preview" id="zonePreview">

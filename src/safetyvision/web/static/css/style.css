@@ -412,6 +412,92 @@ input[type="range"]::-webkit-slider-thumb:hover {
   border-color: var(--primary);
   box-shadow: inset 0 0 0 1px var(--primary);
 }
+.form-group select {
+  width: 100%;
+  padding: 0.75rem 1rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: 0.95rem;
+  transition: border-color var(--transition), box-shadow var(--transition);
+}
+.form-group select:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: inset 0 0 0 1px var(--primary);
+}
+
+/* Camera settings */
+.camera-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 1.25rem;
+}
+
+.camera-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.25rem;
+  box-shadow: var(--shadow-sm);
+}
+
+.camera-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.camera-card-header h3 {
+  font-size: 1rem;
+  margin-bottom: 0.3rem;
+}
+
+.camera-card-subtitle {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  line-height: 1.4;
+  word-break: break-all;
+}
+
+.camera-mode-badge {
+  padding: 0.3rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-dim);
+  font-size: 0.72rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.camera-grid {
+  margin-bottom: 1rem;
+}
+
+.camera-mode-section {
+  border-top: 1px solid var(--border);
+  padding-top: 1rem;
+  margin-top: 1rem;
+}
+
+.camera-wide-field {
+  grid-column: 1 / -1;
+}
+
+.camera-mode-note {
+  color: var(--text-dim);
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
+.camera-card-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 1rem;
+}
 
 /* Buttons */
 .btn-primary {
@@ -548,4 +634,5 @@ input[type="range"]::-webkit-slider-thumb:hover {
   .metrics-grid { grid-template-columns: repeat(2, minmax(130px, 1fr)); }
   .apply-bar { flex-wrap: wrap; }
   .apply-status { width: 100%; margin-top: 0.5rem; }
+  .camera-card-header { flex-direction: column; }
 }

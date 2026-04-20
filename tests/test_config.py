@@ -28,6 +28,16 @@ class TestLoadConfig:
                         "id": "back",
                         "rtsp_url": "rtsp://cam:554/sub",
                         "rtsp_url_main": "rtsp://cam:554/main",
+                        "mode": "distance",
+                        "zone": {
+                            "yellow_start_y": 0.25,
+                            "red_start_y": 0.70,
+                        },
+                        "distance": {
+                            "warning_distance_m": 2.5,
+                            "danger_distance_m": 1.2,
+                            "calibration_path": "config/calibration/back.yaml",
+                        },
                     }
                 ],
                 "target_fps": 20,
@@ -46,6 +56,12 @@ class TestLoadConfig:
         assert cfg.input.cameras[0].id == "back"
         assert cfg.input.cameras[0].rtsp_url == "rtsp://cam:554/sub"
         assert cfg.input.cameras[0].rtsp_url_main == "rtsp://cam:554/main"
+        assert cfg.input.cameras[0].mode == "distance"
+        assert cfg.input.cameras[0].zone.yellow_start_y == 0.25
+        assert cfg.input.cameras[0].zone.red_start_y == 0.70
+        assert cfg.input.cameras[0].distance.warning_distance_m == 2.5
+        assert cfg.input.cameras[0].distance.danger_distance_m == 1.2
+        assert cfg.input.cameras[0].distance.calibration_path == "config/calibration/back.yaml"
         assert cfg.input.target_fps == 20
         assert cfg.model.conf_threshold == 0.6
         assert cfg.alert.repeat_interval_sec == 2.0
@@ -110,6 +126,12 @@ class TestValidation:
         with pytest.raises(ConfigError, match="model.runtime"):
             validate(cfg)
 
+    def test_camera_mode_must_be_zone_or_distance(self):
+        cfg = _valid_cfg()
+        cfg.input.cameras[0].mode = "sensor"
+        with pytest.raises(ConfigError, match="mode must be 'zone' or 'distance'"):
+            validate(cfg)
+
     def test_path_hef_required(self):
         cfg = _valid_cfg()
         cfg.model.path_hef = ""
@@ -158,6 +180,21 @@ class TestValidation:
         cfg = _valid_cfg()
         cfg.alert.min_alert_confidence = 1.2
         with pytest.raises(ConfigError, match="min_alert_confidence"):
+            validate(cfg)
+
+    def test_invalid_camera_zone_override(self):
+        cfg = _valid_cfg()
+        cfg.input.cameras[0].zone.yellow_start_y = 0.8
+        cfg.input.cameras[0].zone.red_start_y = 0.4
+        with pytest.raises(ConfigError, match="camera 'back' yellow_start_y"):
+            validate(cfg)
+
+    def test_invalid_camera_distance_threshold_order(self):
+        cfg = _valid_cfg()
+        cfg.input.cameras[0].mode = "distance"
+        cfg.input.cameras[0].distance.warning_distance_m = 1.0
+        cfg.input.cameras[0].distance.danger_distance_m = 1.0
+        with pytest.raises(ConfigError, match="warning_distance_m must be greater"):
             validate(cfg)
 
     def test_valid_config_passes(self):

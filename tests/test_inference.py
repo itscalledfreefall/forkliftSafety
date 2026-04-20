@@ -73,6 +73,18 @@ class TestZoneBands:
         d = Detection(x1=0, y1=0, x2=100, y2=100, confidence=0.9, class_id=0)
         assert _classify_detection_zone(d, 0, cfg) == ""
 
+    def test_camera_specific_cut_lines_override_global_defaults(self):
+        cfg = SafetyVisionConfig()
+        cam = CameraConfig(id="back", rtsp_url="rtsp://x/y")
+        cam.zone.yellow_start_y = 0.20
+        cam.zone.red_start_y = 0.40
+        cfg.input.cameras = [cam]
+        cfg.alert.yellow_start_y = 0.50
+        cfg.alert.red_start_y = 0.80
+
+        d = Detection(x1=0, y1=100, x2=100, y2=220, confidence=0.9, class_id=0)
+        assert _classify_detection_zone(d, 480, cfg, cam) == "danger"
+
 
 class TestHailoPreprocess:
     """HailoBackend._preprocess doesn't require hardware or the hailo_platform module."""

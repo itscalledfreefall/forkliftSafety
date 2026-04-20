@@ -5,9 +5,29 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 import yaml
+
+
+@dataclass
+class CameraZoneConfig:
+    """Optional per-camera zone thresholds.
+
+    When omitted, the camera falls back to the global alert thresholds.
+    """
+
+    yellow_start_y: Optional[float] = None
+    red_start_y: Optional[float] = None
+
+
+@dataclass
+class CameraDistanceConfig:
+    """Placeholder per-camera distance configuration for rear camera mode."""
+
+    warning_distance_m: float = 2.0
+    danger_distance_m: float = 1.0
+    calibration_path: str = ""
 
 
 @dataclass
@@ -17,6 +37,9 @@ class CameraConfig:
     id: str = "default"
     rtsp_url: str = ""
     rtsp_url_main: str = ""  # optional high-res preview for the web UI
+    mode: str = "zone"  # "zone" | "distance"
+    zone: CameraZoneConfig = field(default_factory=CameraZoneConfig)
+    distance: CameraDistanceConfig = field(default_factory=CameraDistanceConfig)
 
 
 @dataclass
@@ -101,8 +124,25 @@ def _parse_cameras(raw_input: dict) -> List[CameraConfig]:
     for entry in raw_list:
         if not isinstance(entry, dict):
             continue
-        cams.append(_merge(CameraConfig, entry))
+        cam = _merge(CameraConfig, entry)
+        cam.zone = _merge(CameraZoneConfig, entry.get("zone"))
+        cam.distance = _merge(CameraDistanceConfig, entry.get("distance"))
+        cams.append(cam)
     return cams
+
+
+def get_effective_zone_thresholds(
+    cfg: "SafetyVisionConfig", camera: CameraConfig | None = None
+) -> tuple[float, float]:
+    """Return zone cut lines for a camera, falling back to global alert defaults."""
+    yellow = cfg.alert.yellow_start_y
+    red = cfg.alert.red_start_y
+    if camera is not None:
+        if camera.zone.yellow_start_y is not None:
+            yellow = camera.zone.yellow_start_y
+        if camera.zone.red_start_y is not None:
+            red = camera.zone.red_start_y
+    return yellow, red
 
 
 def load_config(path: str | Path | None = None) -> SafetyVisionConfig:
@@ -150,6 +190,27 @@ def validate(cfg: SafetyVisionConfig) -> None:
         ids.add(cam.id)
         if not cam.rtsp_url:
             raise ConfigError(f"camera '{cam.id}' requires rtsp_url")
+        if cam.mode not in {"zone", "distance"}:
+            raise ConfigError(f"camera '{cam.id}' mode must be 'zone' or 'distance'")
+
+        cam_yellow, cam_red = get_effective_zone_thresholds(cfg, cam)
+        if not 0.0 < cam_yellow < 1.0:
+            raise ConfigError(f"camera '{cam.id}' yellow_start_y must be between 0 and 1")
+        if not 0.0 < cam_red < 1.0:
+            raise ConfigError(f"camera '{cam.id}' red_start_y must be between 0 and 1")
+        if cam_yellow >= cam_red:
+            raise ConfigError(
+                f"camera '{cam.id}' yellow_start_y must be less than red_start_y"
+            )
+
+        if cam.distance.warning_distance_m <= 0:
+            raise ConfigError(f"camera '{cam.id}' warning_distance_m must be positive")
+        if cam.distance.danger_distance_m <= 0:
+            raise ConfigError(f"camera '{cam.id}' danger_distance_m must be positive")
+        if cam.distance.warning_distance_m <= cam.distance.danger_distance_m:
+            raise ConfigError(
+                f"camera '{cam.id}' warning_distance_m must be greater than danger_distance_m"
+            )
 
     if cfg.model.runtime != "hailo":
         raise ConfigError(

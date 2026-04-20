@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import copy
 import hashlib
 import json
 import os
@@ -14,6 +13,7 @@ import shutil
 import subprocess
 import time
 from collections import deque
+from dataclasses import asdict
 from pathlib import Path
 from typing import Optional
 
@@ -27,7 +27,13 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from starlette.middleware.cors import CORSMiddleware
 
-from safetyvision.config import SafetyVisionConfig, load_config, validate, ConfigError
+from safetyvision.config import (
+    ConfigError,
+    SafetyVisionConfig,
+    get_effective_zone_thresholds,
+    load_config,
+    validate,
+)
 
 # ---------------------------------------------------------------------------
 # App setup
@@ -128,10 +134,33 @@ class AlertTimingConfig(BaseModel):
     min_alert_confidence: float
 
 
+class CameraZoneOverrideConfig(BaseModel):
+    yellow_start_y: Optional[float] = None
+    red_start_y: Optional[float] = None
+
+
+class CameraDistanceSettings(BaseModel):
+    warning_distance_m: float = 2.0
+    danger_distance_m: float = 1.0
+    calibration_path: str = ""
+
+
+class CameraSettingsUpdate(BaseModel):
+    mode: str
+    zone: Optional[CameraZoneOverrideConfig] = None
+    distance: Optional[CameraDistanceSettings] = None
+
+
 @app.get("/api/config")
 async def get_config(_token: str = Depends(_check_session)):
     raw = _load_raw_config()
     return raw
+
+
+@app.get("/api/config/cameras")
+async def get_camera_configs(_token: str = Depends(_check_session)):
+    cfg = load_config(CONFIG_PATH)
+    return [_camera_to_response(cam, cfg) for cam in cfg.input.cameras]
 
 
 @app.post("/api/config/zones")
@@ -171,6 +200,36 @@ async def set_timing(body: AlertTimingConfig, _token: str = Depends(_check_sessi
         "min_alert_confidence": body.min_alert_confidence,
     })
     return {"ok": True}
+
+
+@app.post("/api/config/cameras/{camera_id}")
+async def set_camera_config(
+    camera_id: str,
+    body: CameraSettingsUpdate,
+    _token: str = Depends(_check_session),
+):
+    raw = _load_raw_config()
+    camera = _find_raw_camera(raw, camera_id)
+    if camera is None:
+        raise HTTPException(status_code=404, detail=f"Unknown camera '{camera_id}'")
+
+    camera["mode"] = body.mode
+    if body.zone is not None:
+        camera["zone"] = _compact_dict(_model_dump(body.zone))
+    if body.distance is not None:
+        camera["distance"] = _compact_dict(_model_dump(body.distance))
+
+    try:
+        cfg = _build_config_from_raw(raw)
+        validate(cfg)
+    except ConfigError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    _write_raw_config(raw)
+    updated = next((cam for cam in cfg.input.cameras if cam.id == camera_id), None)
+    if updated is None:
+        raise HTTPException(status_code=500, detail="Camera update did not persist")
+    return {"ok": True, "camera": _camera_to_response(updated, cfg)}
 
 
 @app.post("/api/config/validate")
@@ -594,11 +653,46 @@ def _load_raw_config() -> dict:
     return {}
 
 
-def _build_config_with_overrides(overrides: dict) -> SafetyVisionConfig:
-    """Load current config, apply overrides, and return for validation.
+def _write_raw_config(raw: dict) -> None:
+    with open(CONFIG_PATH, "w") as f:
+        yaml.dump(raw, f, default_flow_style=None, sort_keys=False)
 
-    Does NOT validate — caller is responsible for calling validate().
-    """
+
+def _model_dump(model: BaseModel) -> dict:
+    if hasattr(model, "model_dump"):
+        return model.model_dump(exclude_none=True)
+    return model.dict(exclude_none=True)
+
+
+def _compact_dict(values: dict) -> dict:
+    return {
+        key: value
+        for key, value in values.items()
+        if value is not None and value != {}
+    }
+
+
+def _find_raw_camera(raw: dict, camera_id: str) -> Optional[dict]:
+    cameras = raw.get("input", {}).get("cameras") or []
+    for camera in cameras:
+        if isinstance(camera, dict) and camera.get("id") == camera_id:
+            return camera
+    return None
+
+
+def _camera_to_response(camera, cfg: SafetyVisionConfig) -> dict:
+    yellow_y, red_y = get_effective_zone_thresholds(cfg, camera)
+    data = asdict(camera)
+    data["effective_zone"] = {
+        "yellow_start_y": yellow_y,
+        "red_start_y": red_y,
+    }
+    data["distance_mode_ready"] = False
+    return data
+
+
+def _build_config_from_raw(raw: dict) -> SafetyVisionConfig:
+    """Build config from a raw YAML dict without touching disk."""
     from safetyvision.config import (
         AlertConfig,
         HealthConfig,
@@ -609,10 +703,6 @@ def _build_config_with_overrides(overrides: dict) -> SafetyVisionConfig:
         _merge,
         _parse_cameras,
     )
-
-    raw = _load_raw_config()
-    for section, values in overrides.items():
-        raw.setdefault(section, {}).update(values)
 
     raw_input = raw.get("input") or {}
     input_cfg = _merge(InputConfig, raw_input)
@@ -628,12 +718,22 @@ def _build_config_with_overrides(overrides: dict) -> SafetyVisionConfig:
     )
 
 
+def _build_config_with_overrides(overrides: dict) -> SafetyVisionConfig:
+    """Load current config, apply overrides, and return for validation.
+
+    Does NOT validate — caller is responsible for calling validate().
+    """
+    raw = _load_raw_config()
+    for section, values in overrides.items():
+        raw.setdefault(section, {}).update(values)
+    return _build_config_from_raw(raw)
+
+
 def _update_config_section(section: str, values: dict) -> None:
     """Merge values into a section of the config YAML."""
     raw = _load_raw_config()
     raw.setdefault(section, {}).update(values)
-    with open(CONFIG_PATH, "w") as f:
-        yaml.dump(raw, f, default_flow_style=None, sort_keys=False)
+    _write_raw_config(raw)
 
 
 # ---------------------------------------------------------------------------

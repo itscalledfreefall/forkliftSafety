@@ -10,7 +10,7 @@ from typing import Optional
 
 from loguru import logger
 
-from safetyvision.config import SafetyVisionConfig
+from safetyvision.config import CameraConfig, SafetyVisionConfig, get_effective_zone_thresholds
 from safetyvision.inference.backends import InferenceBackend, load_backend
 from safetyvision.types import Detection, DetectionEvent, FramePacket
 
@@ -27,6 +27,7 @@ def _classify_detection_zone(
     det: Detection,
     frame_h: int,
     cfg: SafetyVisionConfig,
+    camera: CameraConfig | None = None,
 ) -> str:
     """Classify a detection into a horizontal band zone by footpoint Y.
 
@@ -39,10 +40,11 @@ def _classify_detection_zone(
         return ""
     foot_y = float(det.y2) / frame_h
     foot_y = min(max(foot_y, 0.0), 1.0)
+    yellow_start_y, red_start_y = get_effective_zone_thresholds(cfg, camera)
 
-    if foot_y >= cfg.alert.red_start_y:
+    if foot_y >= red_start_y:
         return "danger"
-    if foot_y >= cfg.alert.yellow_start_y:
+    if foot_y >= yellow_start_y:
         return "medium"
     return ""
 
@@ -69,6 +71,7 @@ class InferenceWorker:
         self._backend = backend
         self._thread: Optional[threading.Thread] = None
         self._smoothing: dict[str, list[bool]] = {}
+        self._camera_by_id = {camera.id: camera for camera in cfg.input.cameras}
 
     def start(self) -> None:
         if self._backend is None:
@@ -122,8 +125,9 @@ class InferenceWorker:
 
             # Multi-person: highest-risk band wins (danger > medium > green)
             zone_level = ""
+            camera_cfg = self._camera_by_id.get(pkt.camera_id)
             for d in dets:
-                zone = _classify_detection_zone(d, frame_h, self._cfg)
+                zone = _classify_detection_zone(d, frame_h, self._cfg, camera_cfg)
                 if zone == "danger":
                     zone_level = "danger"
                     break
