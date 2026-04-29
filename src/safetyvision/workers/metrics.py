@@ -29,6 +29,8 @@ class MetricsCollector:
         self._decision_latencies: deque[float] = deque()
         self._frames_dropped = 0
         self._alert_count = 0
+        self._yellow_zone_entries = 0
+        self._red_zone_entries = 0
         self._start_time = time.monotonic()
 
     def _record_stage_frame(self, dq: deque[float]) -> None:
@@ -80,6 +82,14 @@ class MetricsCollector:
         with self._lock:
             self._alert_count += 1
 
+    def record_yellow_entry(self) -> None:
+        with self._lock:
+            self._yellow_zone_entries += 1
+
+    def record_red_entry(self) -> None:
+        with self._lock:
+            self._red_zone_entries += 1
+
     def snapshot(self) -> PipelineMetrics:
         with self._lock:
             now = time.monotonic()
@@ -119,6 +129,8 @@ class MetricsCollector:
                 ),
                 frames_dropped=self._frames_dropped,
                 alert_count=self._alert_count,
+                yellow_zone_entries=self._yellow_zone_entries,
+                red_zone_entries=self._red_zone_entries,
                 uptime_sec=round(now - self._start_time, 1),
             )
 
@@ -171,17 +183,21 @@ class MetricsWorker:
                     "latency_total_ms": snap.total_latency_ms,
                     "frames_dropped": snap.frames_dropped,
                     "alerts": snap.alert_count,
+                    "yellow_zone_entries": snap.yellow_zone_entries,
+                    "red_zone_entries": snap.red_zone_entries,
                     "uptime_s": snap.uptime_sec,
                 }
                 logger.info(json.dumps(record))
             else:
                 logger.info(
-                    "FPS(inf)={} capture={} decision={} lat={:.1f}ms dropped={} alerts={} up={:.0f}s",
+                    "FPS(inf)={} capture={} decision={} lat={:.1f}ms dropped={} alerts={} yel={} red={} up={:.0f}s",
                     snap.fps,
                     snap.capture_fps,
                     snap.decision_fps,
                     snap.total_latency_ms,
                     snap.frames_dropped,
                     snap.alert_count,
+                    snap.yellow_zone_entries,
+                    snap.red_zone_entries,
                     snap.uptime_sec,
                 )

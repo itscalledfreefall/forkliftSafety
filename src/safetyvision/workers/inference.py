@@ -211,6 +211,8 @@ class InferenceWorker:
         stop_event: threading.Event,
         latency_cb=None,
         frame_cb=None,
+        zone_yellow_cb=None,
+        zone_red_cb=None,
     ):
         self._cfg = cfg
         self._in_queue = in_queue
@@ -218,12 +220,15 @@ class InferenceWorker:
         self._stop = stop_event
         self._latency_cb = latency_cb
         self._frame_cb = frame_cb
+        self._zone_yellow_cb = zone_yellow_cb
+        self._zone_red_cb = zone_red_cb
         self._session = None
         self._pt_model = None
         self._runtime_type = ""
         self._thread: Optional[threading.Thread] = None
         # Temporal smoothing buffer
         self._recent_detections: list[bool] = []
+        self._prev_zone_level: str = ""
 
     def start(self) -> None:
         self._load_model()
@@ -401,6 +406,14 @@ class InferenceWorker:
                     break  # can't get higher
                 if zone == "medium":
                     zone_level = "medium"
+
+            if zone_level == "medium" and self._prev_zone_level == "":
+                if self._zone_yellow_cb:
+                    self._zone_yellow_cb()
+            elif zone_level == "danger" and self._prev_zone_level in ("", "medium"):
+                if self._zone_red_cb:
+                    self._zone_red_cb()
+            self._prev_zone_level = zone_level
 
             event = DetectionEvent(
                 timestamp_ns=pkt.timestamp_ns,

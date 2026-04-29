@@ -127,7 +127,7 @@ main { max-width: 1400px; margin: 0 auto; }
 /* Dashboard metrics */
 .metrics-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(140px, 1fr));
+  grid-template-columns: repeat(3, minmax(140px, 1fr));
   gap: 0.75rem;
   margin-bottom: 0.9rem;
 }
@@ -137,6 +137,19 @@ main { max-width: 1400px; margin: 0 auto; }
   border: 1px solid #2b3e63;
   border-radius: 8px;
   padding: 0.7rem 0.85rem;
+}
+
+.metric-card.metric-yellow {
+  border-color: var(--yellow);
+}
+.metric-card.metric-yellow .metric-value {
+  color: var(--yellow);
+}
+.metric-card.metric-red {
+  border-color: var(--red);
+}
+.metric-card.metric-red .metric-value {
+  color: var(--red);
 }
 
 .metric-label {

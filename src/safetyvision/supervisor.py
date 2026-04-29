@@ -112,6 +112,8 @@ class Supervisor:
             self._stop,
             latency_cb=self._metrics.record_inference_latency,
             frame_cb=self._metrics.record_inference_frame,
+            zone_yellow_cb=self._metrics.record_yellow_entry,
+            zone_red_cb=self._metrics.record_red_entry,
         )
         self._decision = DecisionWorker(
             cfg,

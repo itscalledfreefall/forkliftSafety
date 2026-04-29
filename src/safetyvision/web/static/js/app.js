@@ -67,12 +67,16 @@
         setMetricValue('metricLatency', NaN, 1);
         setMetricValue('metricCaptureFps', NaN, 1);
         setMetricValue('metricInferenceFps', NaN, 1);
+        setMetricValue('metricYellowEntries', NaN, 0);
+        setMetricValue('metricRedEntries', NaN, 0);
         return;
       }
       setMetricValue('metricFps', data.fps, 1);
       setMetricValue('metricLatency', data.latency_total_ms, 1);
       setMetricValue('metricCaptureFps', data.capture_fps, 1);
       setMetricValue('metricInferenceFps', data.inference_fps, 1);
+      setMetricValue('metricYellowEntries', data.yellow_zone_entries, 0);
+      setMetricValue('metricRedEntries', data.red_zone_entries, 0);
     } catch {
       // Keep existing values on transient errors.
     }
