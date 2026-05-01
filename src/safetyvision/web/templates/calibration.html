@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SafetyVision — Distance Calibration</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+  <link rel="stylesheet" href="/static/css/calibration.css">
+</head>
+<body>
+  <header>
+    <h1>SafetyVision · Distance Calibration</h1>
+    <div class="header-right">
+      <a href="/" class="btn-small">&larr; Dashboard</a>
+      <span id="modeBadge" class="status-badge">--</span>
+      <button id="logoutBtn" class="btn-small">Logout</button>
+    </div>
+  </header>
+
+  <main class="cal-main">
+    <p class="help-text">
+      Capture a frame from the back camera, click 4 ground points (in any order),
+      then enter each point's real-world position relative to the
+      <strong>forklift center</strong> in meters. The forklift center is the origin (0, 0).
+      X = lateral (right is +), Y = longitudinal (forward is +).
+    </p>
+
+    <div class="cal-grid">
+      <!-- Frame + click area -->
+      <section class="cal-frame">
+        <div class="cal-toolbar">
+          <button id="captureBtn" class="btn-primary">Capture Frame</button>
+          <button id="resetPointsBtn" class="btn-secondary">Reset Points</button>
+          <span id="frameStatus" class="apply-status"></span>
+        </div>
+        <div id="canvasWrap" class="canvas-wrap">
+          <canvas id="frameCanvas" width="640" height="480"></canvas>
+          <div id="canvasPlaceholder" class="canvas-placeholder">
+            Click <strong>Capture Frame</strong> to load the latest camera image.
+          </div>
+        </div>
+      </section>
+
+      <!-- Coordinate inputs + axis diagram -->
+      <section class="cal-inputs">
+        <h3>Forklift Coordinate Frame</h3>
+        <svg class="axis-diagram" viewBox="0 0 200 200">
+          <rect x="60" y="80" width="80" height="40" rx="4"
+                fill="#0f3460" stroke="#448aff" stroke-width="2"/>
+          <text x="100" y="105" text-anchor="middle" fill="#e0e0e0" font-size="10">forklift</text>
+          <line x1="100" y1="170" x2="100" y2="30" stroke="#00c853" stroke-width="1.5"/>
+          <polygon points="100,25 96,35 104,35" fill="#00c853"/>
+          <text x="106" y="35" fill="#00c853" font-size="11">Y+ (forward)</text>
+          <line x1="20" y1="100" x2="180" y2="100" stroke="#ffd600" stroke-width="1.5"/>
+          <polygon points="185,100 175,96 175,104" fill="#ffd600"/>
+          <text x="125" y="120" fill="#ffd600" font-size="11">X+ (right)</text>
+          <circle cx="100" cy="100" r="3" fill="#ff1744"/>
+          <text x="106" y="98" fill="#ff1744" font-size="9">origin</text>
+        </svg>
+
+        <h3>Points</h3>
+        <div id="pointInputs" class="point-rows">
+          <div class="point-empty">Click 4 points on the captured frame to begin.</div>
+        </div>
+
+        <div class="cal-actions">
+          <button id="saveBtn" class="btn-primary" disabled>Save Calibration</button>
+          <button id="enableBtn" class="btn-danger" disabled>Enable Distance Mode</button>
+          <button id="disableBtn" class="btn-secondary" disabled>Switch to Band Mode</button>
+        </div>
+        <div id="actionStatus" class="apply-status"></div>
+      </section>
+    </div>
+  </main>
+
+  <div id="toast" class="toast"></div>
+
+  <script src="/static/js/calibration.js"></script>
+</body>
+</html>

@@ -57,11 +57,30 @@
     el.textContent = value.toFixed(digits);
   }
 
+  function updateDistanceCard(data) {
+    const card = document.getElementById('distanceCard');
+    const distEl = document.getElementById('metricDistance');
+    const zoneEl = document.getElementById('metricZoneLevel');
+    if (!card) return;
+    const isDistance = data && data.zone_mode === 'distance';
+    card.style.display = isDistance ? '' : 'none';
+    if (!isDistance) return;
+    if (typeof data.last_distance_m === 'number') {
+      distEl.textContent = data.last_distance_m.toFixed(2);
+    } else {
+      distEl.textContent = '--';
+    }
+    const zone = data.last_zone_level || 'green';
+    zoneEl.textContent = zone === '' ? 'green' : zone;
+    zoneEl.className = 'zone-' + (zone || 'green');
+  }
+
   async function pollMetrics() {
     try {
       const res = await fetch('/api/metrics');
       if (res.status === 401) return;
       const data = await res.json();
+      updateDistanceCard(data);
       if (!data.available) {
         setMetricValue('metricFps', NaN, 1);
         setMetricValue('metricLatency', NaN, 1);

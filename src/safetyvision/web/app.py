@@ -28,6 +28,7 @@ from pydantic import BaseModel
 from starlette.middleware.cors import CORSMiddleware
 
 from safetyvision.config import SafetyVisionConfig, load_config, validate, ConfigError
+from safetyvision.web.calibration import create_calibration_router
 
 # ---------------------------------------------------------------------------
 # App setup
@@ -254,6 +255,16 @@ def _coerce_metric(payload: dict, key: str, default: float = 0.0) -> float:
 
 def _normalize_metrics(payload: dict) -> dict:
     """Normalize metrics payload shape for frontend consumption."""
+    raw_distance = payload.get("last_distance_m")
+    try:
+        last_distance_m = float(raw_distance) if raw_distance is not None else None
+    except (TypeError, ValueError):
+        last_distance_m = None
+
+    last_zone_level = payload.get("last_zone_level") or ""
+    if not isinstance(last_zone_level, str):
+        last_zone_level = ""
+
     return {
         "fps": _coerce_metric(payload, "fps"),
         "capture_fps": _coerce_metric(payload, "capture_fps"),
@@ -266,6 +277,8 @@ def _normalize_metrics(payload: dict) -> dict:
         "frames_dropped": int(_coerce_metric(payload, "frames_dropped")),
         "alerts": int(_coerce_metric(payload, "alerts")),
         "uptime_s": _coerce_metric(payload, "uptime_s"),
+        "last_distance_m": last_distance_m,
+        "last_zone_level": last_zone_level,
     }
 
 
@@ -350,9 +363,11 @@ def _read_latest_metrics(max_lines: int = 2000) -> Optional[dict]:
 @app.get("/api/metrics")
 async def get_metrics(_token: str = Depends(_check_session)):
     data = _read_latest_metrics()
+    raw = _load_raw_config()
+    zone_mode = raw.get("alert", {}).get("zone_mode", "bands")
     if data is None:
-        return {"available": False}
-    return {"available": True, **data}
+        return {"available": False, "zone_mode": zone_mode}
+    return {"available": True, "zone_mode": zone_mode, **data}
 
 
 @app.post("/api/apply")
@@ -586,6 +601,21 @@ async def index(request: Request):
 @app.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request):
     return templates.TemplateResponse("login.html", {"request": request})
+
+
+@app.get("/calibration", response_class=HTMLResponse)
+async def calibration_page(request: Request):
+    return templates.TemplateResponse("calibration.html", {"request": request})
+
+
+# Mount the calibration API router. ``CONFIG_PATH`` is read lazily so the
+# ``--config`` CLI override applied in ``main()`` is honored.
+app.include_router(
+    create_calibration_router(
+        check_session=_check_session,
+        get_config_path=lambda: CONFIG_PATH,
+    )
+)
 
 
 # ---------------------------------------------------------------------------

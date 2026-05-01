@@ -121,6 +121,7 @@ class Supervisor:
             latency_cb=self._metrics.record_decision_latency,
             frame_cb=self._metrics.record_decision_frame,
             alert_cb=self._metrics.record_alert,
+            event_cb=self._metrics.record_detection_event,
         )
         self._alert = AlertWorker(cfg, self._alert_q, self._stop)
         self._metrics_worker = MetricsWorker(cfg, self._metrics, self._stop)

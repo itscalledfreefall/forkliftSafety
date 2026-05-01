@@ -16,6 +16,7 @@ from loguru import logger
 
 from safetyvision.config import SafetyVisionConfig
 from safetyvision.types import Detection, DetectionEvent, FramePacket
+from safetyvision.zones import ZoneStrategy, create_zone_strategy
 
 
 def _normalize_runtime(requested_runtime: str, machine: Optional[str] = None) -> str:
@@ -87,30 +88,6 @@ def _compute_iou(a: Detection, b: Detection) -> float:
     area_b = (b.x2 - b.x1) * (b.y2 - b.y1)
     union = area_a + area_b - inter
     return inter / union if union > 0 else 0.0
-
-
-def _classify_detection_zone(
-    det: Detection,
-    frame_h: int,
-    cfg: SafetyVisionConfig,
-) -> str:
-    """Classify a detection into a horizontal band zone by footpoint Y.
-
-    Bands (top-to-bottom):
-        0.0  .. yellow_start_y  = green  (no sound)
-        yellow_start_y .. red_start_y = medium (yellow sound)
-        red_start_y .. 1.0      = danger (red sound)
-    """
-    if frame_h <= 0:
-        return ""
-    foot_y = float(det.y2) / frame_h
-    foot_y = min(max(foot_y, 0.0), 1.0)
-
-    if foot_y >= cfg.alert.red_start_y:
-        return "danger"
-    if foot_y >= cfg.alert.yellow_start_y:
-        return "medium"
-    return ""
 
 
 def _postprocess(
@@ -222,8 +199,11 @@ class InferenceWorker:
         self._pt_model = None
         self._runtime_type = ""
         self._thread: Optional[threading.Thread] = None
-        # Temporal smoothing buffer
+        # Temporal smoothing buffer for person-detected gating.
         self._recent_detections: list[bool] = []
+        # Zone strategy (band or distance) chosen by config; raises here on
+        # missing/corrupt calibration so systemd notices a misconfigured unit.
+        self._zone_strategy: ZoneStrategy = create_zone_strategy(cfg)
 
     def start(self) -> None:
         self._load_model()
@@ -390,25 +370,18 @@ class InferenceWorker:
             raw_detected = len(dets) > 0
             smoothed = self._apply_temporal_smoothing(raw_detected)
             max_conf = max((d.confidence for d in dets), default=0.0)
-            frame_h = pkt.frame.shape[0]
+            frame_h, frame_w = pkt.frame.shape[:2]
 
-            # Multi-person: highest-risk band wins (danger > medium > green)
-            zone_level = ""
-            for d in dets:
-                zone = _classify_detection_zone(d, frame_h, self._cfg)
-                if zone == "danger":
-                    zone_level = "danger"
-                    break  # can't get higher
-                if zone == "medium":
-                    zone_level = "medium"
+            zone = self._zone_strategy.classify(dets, frame_h, frame_w)
 
             event = DetectionEvent(
                 timestamp_ns=pkt.timestamp_ns,
                 person_detected=smoothed,
                 confidence_max=max_conf,
                 bbox_count=len(dets),
-                zone_level=zone_level,
+                zone_level=zone.zone_level,
                 source_id=pkt.source_id,
+                distance_m=zone.distance_m,
             )
 
             # Non-blocking push to decision queue

@@ -11,6 +11,7 @@
     <h1>SafetyVision</h1>
     <div class="header-right">
       <span id="serviceStatus" class="status-badge">--</span>
+      <a href="/calibration" class="btn-small">Calibration</a>
       <button id="logoutBtn" class="btn-small">Logout</button>
     </div>
   </header>
@@ -42,6 +43,11 @@
         <div class="metric-card">
           <div class="metric-label">Inference FPS</div>
           <div class="metric-value" id="metricInferenceFps">--</div>
+        </div>
+        <div class="metric-card" id="distanceCard" style="display:none">
+          <div class="metric-label">Closest Person</div>
+          <div class="metric-value" id="metricDistance">--</div>
+          <div class="metric-unit">m · <span id="metricZoneLevel">green</span></div>
         </div>
       </div>
       <div class="stream-container">

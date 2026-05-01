@@ -6,7 +6,6 @@ import pytest
 from safetyvision.types import Detection
 from safetyvision.config import SafetyVisionConfig
 from safetyvision.workers.inference import (
-    _classify_detection_zone,
     _compute_iou,
     _letterbox,
     _normalize_runtime,
@@ -88,85 +87,6 @@ class TestIoU:
         d1 = Detection(0, 0, 100, 100, 0.9, 0)
         d2 = Detection(50, 50, 150, 150, 0.8, 0)
         assert 0.0 < _compute_iou(d1, d2) < 1.0
-
-
-class TestZoneBands:
-    """Horizontal band zone classification.
-
-    Default bands: green [0, 0.33), yellow [0.33, 0.66), red [0.66, 1.0]
-    Zone is decided by bbox footpoint Y (y2 / frame_h).
-    """
-
-    @pytest.fixture
-    def cfg(self):
-        c = SafetyVisionConfig()
-        c.alert.yellow_start_y = 0.33
-        c.alert.red_start_y = 0.66
-        return c
-
-    def test_green_zone_top(self, cfg):
-        """Footpoint in top third => green (no zone)."""
-        # y2=100 on 480h frame => foot_y = 100/480 ≈ 0.208
-        d = Detection(x1=100, y1=50, x2=200, y2=100, confidence=0.9, class_id=0)
-        assert _classify_detection_zone(d, 480, cfg) == ""
-
-    def test_yellow_zone_middle(self, cfg):
-        """Footpoint in middle third => medium."""
-        # y2=240 on 480h frame => foot_y = 240/480 = 0.50
-        d = Detection(x1=100, y1=150, x2=200, y2=240, confidence=0.9, class_id=0)
-        assert _classify_detection_zone(d, 480, cfg) == "medium"
-
-    def test_red_zone_bottom(self, cfg):
-        """Footpoint in bottom third => danger."""
-        # y2=400 on 480h frame => foot_y = 400/480 ≈ 0.833
-        d = Detection(x1=100, y1=300, x2=200, y2=400, confidence=0.9, class_id=0)
-        assert _classify_detection_zone(d, 480, cfg) == "danger"
-
-    def test_exactly_at_yellow_boundary(self, cfg):
-        """Footpoint exactly at yellow_start_y => medium."""
-        # foot_y = 0.33 exactly
-        y2 = 0.33 * 480  # 158.4
-        d = Detection(x1=100, y1=100, x2=200, y2=y2, confidence=0.9, class_id=0)
-        assert _classify_detection_zone(d, 480, cfg) == "medium"
-
-    def test_exactly_at_red_boundary(self, cfg):
-        """Footpoint exactly at red_start_y => danger."""
-        y2 = 0.66 * 480  # 316.8
-        d = Detection(x1=100, y1=200, x2=200, y2=y2, confidence=0.9, class_id=0)
-        assert _classify_detection_zone(d, 480, cfg) == "danger"
-
-    def test_footpoint_at_very_bottom(self, cfg):
-        """Footpoint at frame bottom (y2=frame_h) => danger."""
-        d = Detection(x1=100, y1=300, x2=200, y2=480, confidence=0.9, class_id=0)
-        assert _classify_detection_zone(d, 480, cfg) == "danger"
-
-    def test_footpoint_at_very_top(self, cfg):
-        """Footpoint at frame top (y2≈0) => green."""
-        d = Detection(x1=100, y1=0, x2=200, y2=10, confidence=0.9, class_id=0)
-        assert _classify_detection_zone(d, 480, cfg) == ""
-
-    def test_custom_cut_lines(self):
-        """Custom yellow=0.50, red=0.80."""
-        cfg = SafetyVisionConfig()
-        cfg.alert.yellow_start_y = 0.50
-        cfg.alert.red_start_y = 0.80
-
-        # foot_y = 200/480 ≈ 0.417 => green
-        d1 = Detection(x1=0, y1=100, x2=100, y2=200, confidence=0.9, class_id=0)
-        assert _classify_detection_zone(d1, 480, cfg) == ""
-
-        # foot_y = 300/480 = 0.625 => medium
-        d2 = Detection(x1=0, y1=200, x2=100, y2=300, confidence=0.9, class_id=0)
-        assert _classify_detection_zone(d2, 480, cfg) == "medium"
-
-        # foot_y = 450/480 ≈ 0.9375 => danger
-        d3 = Detection(x1=0, y1=350, x2=100, y2=450, confidence=0.9, class_id=0)
-        assert _classify_detection_zone(d3, 480, cfg) == "danger"
-
-    def test_zero_frame_height(self, cfg):
-        """frame_h=0 should return empty string safely."""
-        d = Detection(x1=0, y1=0, x2=100, y2=100, confidence=0.9, class_id=0)
-        assert _classify_detection_zone(d, 0, cfg) == ""
 
 
 class TestPostprocess:

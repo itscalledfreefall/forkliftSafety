@@ -1,0 +1,148 @@
+/* Calibration page */
+.cal-main {
+  padding: 1rem 1.5rem;
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+.cal-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  gap: 1.25rem;
+  margin-top: 1rem;
+}
+
+.cal-frame {
+  background: var(--surface);
+  border-radius: 8px;
+  padding: 0.75rem;
+}
+
+.cal-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.canvas-wrap {
+  position: relative;
+  background: #000;
+  border-radius: 6px;
+  overflow: hidden;
+  aspect-ratio: 4 / 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+#frameCanvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: crosshair;
+}
+
+.canvas-placeholder {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-dim);
+  text-align: center;
+  padding: 1rem;
+}
+
+.cal-inputs {
+  background: var(--surface);
+  border-radius: 8px;
+  padding: 1rem;
+}
+
+.cal-inputs h3 {
+  font-size: 0.95rem;
+  color: var(--text-dim);
+  margin: 0.75rem 0 0.4rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.cal-inputs h3:first-child { margin-top: 0; }
+
+.axis-diagram {
+  width: 100%;
+  max-width: 220px;
+  display: block;
+  margin: 0 auto;
+  background: var(--bg);
+  border-radius: 6px;
+  padding: 0.5rem;
+}
+
+.point-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin-bottom: 0.75rem;
+}
+
+.point-empty {
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  text-align: center;
+  padding: 0.75rem;
+}
+
+.point-row {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) minmax(0, 1fr);
+  align-items: center;
+  gap: 0.4rem;
+  background: var(--bg);
+  border-radius: 4px;
+  padding: 0.4rem 0.5rem;
+}
+
+.point-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--primary);
+  color: #fff;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.point-row label {
+  font-size: 0.7rem;
+  color: var(--text-dim);
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.point-row input[type="number"] {
+  background: var(--surface2);
+  color: var(--text);
+  border: 1px solid #333;
+  border-radius: 4px;
+  padding: 0.3rem 0.4rem;
+  font-size: 0.85rem;
+  width: 100%;
+}
+
+.point-pixel {
+  font-size: 0.7rem;
+  color: var(--text-dim);
+}
+
+.cal-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin-top: 0.5rem;
+}
