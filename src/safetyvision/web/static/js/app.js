@@ -37,10 +37,23 @@
       const res = await fetch('/api/status');
       const data = await res.json();
       const badge = document.getElementById('serviceStatus');
-      badge.textContent = data.service;
-      badge.className = 'status-badge ' +
+      const txt = document.getElementById('serviceStatusText');
+      if (txt) txt.textContent = data.service;
+      badge.className = 'status-pill ' +
         (data.service === 'active' ? 'active' :
          data.service === 'inactive' ? 'inactive' : 'unknown');
+
+      // Mirror service status into the live-feed badge
+      const isOnline = data.service === 'active';
+      const liveBadge = document.getElementById('liveBadge');
+      const vstatus = document.getElementById('videoStatus');
+      const vicon = document.getElementById('videoWifiIcon');
+      if (liveBadge) liveBadge.classList.toggle('offline', !isOnline);
+      if (vstatus) vstatus.textContent = isOnline ? 'Online' : 'Offline';
+      if (vicon) {
+        vicon.classList.toggle('online-icon', isOnline);
+        vicon.classList.toggle('offline-icon', !isOnline);
+      }
     } catch {}
   }
   pollStatus();
@@ -57,6 +70,10 @@
     el.textContent = value.toFixed(digits);
   }
 
+  const ZONE_LABEL = { green: 'Safe Zone', medium: 'Medium Zone', danger: 'Danger Zone' };
+  const ZONE_TO_VALUE_COLOR = { green: 'value-green', medium: 'value-yellow', danger: 'value-red' };
+  const ZONE_TO_ACCENT = { green: 'accent-green', medium: 'accent-yellow', danger: 'accent-red' };
+
   function updateDistanceCard(data) {
     const card = document.getElementById('distanceCard');
     const distEl = document.getElementById('metricDistance');
@@ -65,14 +82,27 @@
     const isDistance = data && data.zone_mode === 'distance';
     card.style.display = isDistance ? '' : 'none';
     if (!isDistance) return;
-    if (typeof data.last_distance_m === 'number') {
-      distEl.textContent = data.last_distance_m.toFixed(2);
-    } else {
-      distEl.textContent = '--';
+
+    const next = (typeof data.last_distance_m === 'number')
+      ? data.last_distance_m.toFixed(2) : '--';
+    // Pulse only on real value changes (skip transitions to/from "--").
+    if (distEl.textContent !== next && next !== '--' && distEl.textContent !== '--') {
+      distEl.classList.remove('pulse');
+      void distEl.offsetWidth;  // force reflow to restart the keyframe
+      distEl.classList.add('pulse');
     }
-    const zone = data.last_zone_level || 'green';
-    zoneEl.textContent = zone === '' ? 'green' : zone;
-    zoneEl.className = 'zone-' + (zone || 'green');
+    distEl.textContent = next;
+
+    const rawZone = data.last_zone_level || '';
+    const zone = rawZone === '' ? 'green' : rawZone;
+    zoneEl.textContent = ZONE_LABEL[zone] || 'Safe Zone';
+    zoneEl.className = 'zone-tag ' + zone;
+
+    // Tint the distance value + the card accent bar to match the zone
+    distEl.classList.remove('value-green', 'value-yellow', 'value-red');
+    distEl.classList.add(ZONE_TO_VALUE_COLOR[zone]);
+    card.classList.remove('accent-green', 'accent-yellow', 'accent-red');
+    card.classList.add(ZONE_TO_ACCENT[zone]);
   }
 
   async function pollMetrics() {
@@ -92,6 +122,11 @@
       setMetricValue('metricLatency', data.latency_total_ms, 1);
       setMetricValue('metricCaptureFps', data.capture_fps, 1);
       setMetricValue('metricInferenceFps', data.inference_fps, 1);
+
+      // Live-feed FPS readout (rounded to whole number, like the mockup)
+      const vfps = document.getElementById('videoFps');
+      if (vfps && typeof data.capture_fps === 'number')
+        vfps.textContent = data.capture_fps.toFixed(0);
     } catch {
       // Keep existing values on transient errors.
     }
@@ -116,6 +151,7 @@
       if (res.status === 401) { window.location.href = '/login'; return; }
       const cfg = await res.json();
       const alert = cfg.alert || {};
+      const input = cfg.input || {};
 
       // Zone sliders
       const yy = alert.yellow_start_y || 0.33;
@@ -130,6 +166,20 @@
       document.getElementById('repeatInterval').value = alert.repeat_interval_sec || 1.5;
       document.getElementById('minClear').value = alert.min_clear_sec || 3.0;
       document.getElementById('minConfidence').value = alert.min_alert_confidence || 0.55;
+
+      // Live-feed video meta
+      const w = input.width || 640;
+      const h = input.height || 480;
+      const resEl = document.getElementById('videoResolution');
+      if (resEl) resEl.textContent = w + '×' + h;
+
+      // Closest-person threshold readouts
+      const danger = alert.danger_threshold_m || 1.0;
+      const warning = alert.warning_threshold_m || 5.0;
+      const yel = document.getElementById('cpYellowThreshold');
+      const red = document.getElementById('cpRedThreshold');
+      if (yel) yel.textContent = warning.toFixed(1);
+      if (red) red.textContent = danger.toFixed(1);
     } catch {}
   }
   loadConfig();
@@ -257,5 +307,10 @@
     await fetch('/api/auth/logout', { method: 'POST' });
     window.location.href = '/login';
   });
+
+  // Render lucide icons declared via data-lucide attributes
+  if (window.lucide && typeof window.lucide.createIcons === 'function') {
+    window.lucide.createIcons();
+  }
 
 })();

@@ -16,6 +16,7 @@ const toast = document.getElementById('toast');
 const logoutBtn = document.getElementById('logoutBtn');
 
 const POINT_COLORS = ['#00c853', '#ffd600', '#448aff', '#ff1744'];
+const REDUCED_MOTION = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 const state = {
   frameLoaded: false,
   frameImg: null,
@@ -40,29 +41,49 @@ async function refreshStatus() {
   }
   const data = await r.json();
   modeBadge.textContent = data.zone_mode === 'distance' ? 'DISTANCE' : 'BANDS';
-  modeBadge.className = 'status-badge ' + (data.zone_mode === 'distance' ? 'green' : 'yellow');
+  modeBadge.className = 'mode-badge ' + (data.zone_mode === 'distance' ? 'distance' : 'bands');
 
   enableBtn.disabled = !(data.calibrated && data.zone_mode !== 'distance');
   disableBtn.disabled = data.zone_mode !== 'distance';
 }
 
-function redraw() {
+function redraw(animIdx = -1, animScale = 1) {
   if (!state.frameImg) return;
   ctx.drawImage(state.frameImg, 0, 0, canvas.width, canvas.height);
   state.points.forEach((p, i) => {
+    const r = (i === animIdx) ? 8 * animScale : 8;
+    if (r < 0.5) return;
     ctx.fillStyle = POINT_COLORS[i];
     ctx.beginPath();
-    ctx.arc(p.px, p.py, 8, 0, 2 * Math.PI);
+    ctx.arc(p.px, p.py, r, 0, 2 * Math.PI);
     ctx.fill();
     ctx.strokeStyle = '#000';
     ctx.lineWidth = 2;
     ctx.stroke();
-    ctx.fillStyle = '#fff';
-    ctx.font = 'bold 12px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(String(i + 1), p.px, p.py);
+    if (r > 4) {
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 12px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(String(i + 1), p.px, p.py);
+    }
   });
+}
+
+// Pop-in animation for the most recently placed marker. Ease-out-back
+// gives a small overshoot so the dot lands with a tactile "tap" feel.
+function animateMarkerIn(idx) {
+  if (REDUCED_MOTION) { redraw(); return; }
+  const start = performance.now();
+  const DUR = 260;
+  const c1 = 1.7, c3 = c1 + 1;
+  function frame(now) {
+    const t = Math.min(1, (now - start) / DUR);
+    const eased = 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
+    redraw(idx, eased);
+    if (t < 1) requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
 }
 
 function rebuildPointInputs() {
@@ -74,22 +95,31 @@ function rebuildPointInputs() {
   }
   pointInputs.innerHTML = '';
   state.points.forEach((p, i) => {
+    const placed = Number.isFinite(p.xm) && Number.isFinite(p.ym);
     const row = document.createElement('div');
-    row.className = 'point-row';
+    row.className = 'point-row' + (placed ? ' placed' : '');
     row.innerHTML = `
-      <span class="point-badge" style="background:${POINT_COLORS[i]}">${i + 1}</span>
-      <label>X meters
-        <input type="number" step="0.01" data-idx="${i}" data-axis="xm" value="${p.xm ?? ''}">
-      </label>
-      <label>Y meters
-        <input type="number" step="0.01" data-idx="${i}" data-axis="ym" value="${p.ym ?? ''}">
-      </label>
+      <div class="point-row-top">
+        <span class="point-badge" style="background:${POINT_COLORS[i]}">${i + 1}</span>
+        <span class="point-label">Point ${i + 1}</span>
+        <span class="${placed ? 'placed-badge' : 'waiting-badge'}">${placed ? 'Placed' : 'Awaiting input'}</span>
+      </div>
+      <div class="input-pair">
+        <label>
+          <span><i data-lucide="move-horizontal" style="width:10px;height:10px;"></i> X (m)</span>
+          <input type="number" step="0.01" data-idx="${i}" data-axis="xm" value="${p.xm ?? ''}">
+        </label>
+        <label>
+          <span><i data-lucide="move-vertical" style="width:10px;height:10px;"></i> Y (m)</span>
+          <input type="number" step="0.01" data-idx="${i}" data-axis="ym" value="${p.ym ?? ''}">
+        </label>
+      </div>
+      <div class="point-pixel">
+        <i data-lucide="crosshair" style="width:10px;height:10px;"></i>
+        px (${Math.round(p.px)}, ${Math.round(p.py)})
+      </div>
     `;
     pointInputs.appendChild(row);
-    const px = document.createElement('div');
-    px.className = 'point-pixel';
-    px.textContent = `pixel (${Math.round(p.px)}, ${Math.round(p.py)})`;
-    row.appendChild(px);
   });
 
   pointInputs.querySelectorAll('input[type="number"]').forEach(el => {
@@ -98,11 +128,26 @@ function rebuildPointInputs() {
       const axis = e.target.dataset.axis;
       const v = e.target.value === '' ? null : parseFloat(e.target.value);
       state.points[idx][axis] = Number.isFinite(v) ? v : null;
+      // Toggle placed/waiting badge live without a full rebuild
+      const row = el.closest('.point-row');
+      const p = state.points[idx];
+      const nowPlaced = Number.isFinite(p.xm) && Number.isFinite(p.ym);
+      row.classList.toggle('placed', nowPlaced);
+      const badge = row.querySelector('.placed-badge, .waiting-badge');
+      if (badge) {
+        badge.className = nowPlaced ? 'placed-badge' : 'waiting-badge';
+        badge.textContent = nowPlaced ? 'Placed' : 'Awaiting input';
+      }
       saveBtn.disabled = !canSave();
     });
   });
 
   saveBtn.disabled = !canSave();
+
+  // Render any new lucide icons inserted by the row template
+  if (window.lucide && typeof window.lucide.createIcons === 'function') {
+    window.lucide.createIcons();
+  }
 }
 
 function canSave() {
@@ -124,7 +169,7 @@ canvas.addEventListener('click', (e) => {
   const px = (e.clientX - rect.left) * sx;
   const py = (e.clientY - rect.top) * sy;
   state.points.push({ px, py, xm: null, ym: null });
-  redraw();
+  animateMarkerIn(state.points.length - 1);
   rebuildPointInputs();
 });
 
@@ -211,5 +256,10 @@ logoutBtn.addEventListener('click', async () => {
   await fetch('/api/auth/logout', { method: 'POST' });
   window.location.href = '/login';
 });
+
+// Render initial set of lucide icons
+if (window.lucide && typeof window.lucide.createIcons === 'function') {
+  window.lucide.createIcons();
+}
 
 refreshStatus();
