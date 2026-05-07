@@ -30,6 +30,7 @@ class DecisionWorker:
         latency_cb=None,
         frame_cb=None,
         alert_cb=None,
+        event_cb=None,
     ):
         self._cfg = cfg
         self._in_queue = in_queue
@@ -38,6 +39,7 @@ class DecisionWorker:
         self._latency_cb = latency_cb
         self._frame_cb = frame_cb
         self._alert_cb = alert_cb
+        self._event_cb = event_cb
         self._thread: Optional[threading.Thread] = None
 
         self._state = AlertState.IDLE
@@ -133,6 +135,9 @@ class DecisionWorker:
             t0 = time.time_ns()
             alert = self.process_event(event)
             t1 = time.time_ns()
+
+            if self._event_cb is not None:
+                self._event_cb(event)
 
             if alert is not None:
                 try:

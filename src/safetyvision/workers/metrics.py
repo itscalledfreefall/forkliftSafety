@@ -12,7 +12,7 @@ from typing import Optional
 from loguru import logger
 
 from safetyvision.config import SafetyVisionConfig
-from safetyvision.types import PipelineMetrics
+from safetyvision.types import DetectionEvent, PipelineMetrics
 
 
 class MetricsCollector:
@@ -30,6 +30,9 @@ class MetricsCollector:
         self._frames_dropped = 0
         self._alert_count = 0
         self._start_time = time.monotonic()
+        # Last detection event values (overwritten each event)
+        self._last_distance_m: Optional[float] = None
+        self._last_zone_level: str = ""
 
     def _record_stage_frame(self, dq: deque[float]) -> None:
         now = time.monotonic()
@@ -80,6 +83,12 @@ class MetricsCollector:
         with self._lock:
             self._alert_count += 1
 
+    def record_detection_event(self, event: DetectionEvent) -> None:
+        """Store the latest distance / zone for dashboard display."""
+        with self._lock:
+            self._last_distance_m = event.distance_m
+            self._last_zone_level = event.zone_level
+
     def snapshot(self) -> PipelineMetrics:
         with self._lock:
             now = time.monotonic()
@@ -103,6 +112,7 @@ class MetricsCollector:
             inference_fps = _fps(self._inference_frame_times)
             decision_fps = _fps(self._decision_frame_times)
 
+            distance = self._last_distance_m
             return PipelineMetrics(
                 capture_fps=round(capture_fps, 1),
                 inference_fps=round(inference_fps, 1),
@@ -120,6 +130,8 @@ class MetricsCollector:
                 frames_dropped=self._frames_dropped,
                 alert_count=self._alert_count,
                 uptime_sec=round(now - self._start_time, 1),
+                last_distance_m=round(distance, 2) if distance is not None else None,
+                last_zone_level=self._last_zone_level,
             )
 
 
@@ -172,6 +184,8 @@ class MetricsWorker:
                     "frames_dropped": snap.frames_dropped,
                     "alerts": snap.alert_count,
                     "uptime_s": snap.uptime_sec,
+                    "last_distance_m": snap.last_distance_m,
+                    "last_zone_level": snap.last_zone_level,
                 }
                 logger.info(json.dumps(record))
             else:

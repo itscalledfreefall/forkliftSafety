@@ -25,8 +25,16 @@ model:
 alert:
   siren_wav: "assets/audio/danger.wav"
   voice_wav: "assets/audio/medium.wav"
+  # Zone classification: "bands" (Y-thresholds) or "distance" (homography meters).
+  # Toggle via the calibration UI; do not edit by hand once distance mode is in use.
+  zone_mode: bands
   yellow_start_y: 0.29
   red_start_y: 0.78
+  # Distance-mode parameters (only used when zone_mode == "distance").
+  calibration_path: "config/calibration_back.json"
+  danger_threshold_m: 1.0
+  warning_threshold_m: 5.0
+  distance_smoothing_frames: 3
   min_alert_confidence: 0.55
   always_announce_person: false
   repeat_interval_sec: 3.0
