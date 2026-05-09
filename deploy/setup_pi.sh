@@ -7,7 +7,27 @@ echo "=== SafetyVision Raspberry Pi Setup ==="
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-TARGET_DIR="/opt/safetyvision"
+TARGET_DIR="${TARGET_DIR:-$PROJECT_DIR}"
+RUN_USER="${RUN_USER:-${SUDO_USER:-$(stat -c %U "$PROJECT_DIR")}}"
+if [[ -z "${RUN_GROUP:-}" ]]; then
+    if id "${RUN_USER}" >/dev/null 2>&1; then
+        RUN_GROUP="$(id -gn "$RUN_USER")"
+    else
+        RUN_GROUP="$RUN_USER"
+    fi
+fi
+CONFIG_PATH="${CONFIG_PATH:-$TARGET_DIR/config/safetyvision.raspberry.yaml}"
+
+render_template() {
+    local template="$1"
+    local output="$2"
+    sed \
+        -e "s|@TARGET_DIR@|${TARGET_DIR}|g" \
+        -e "s|@RUN_USER@|${RUN_USER}|g" \
+        -e "s|@RUN_GROUP@|${RUN_GROUP}|g" \
+        -e "s|@CONFIG_PATH@|${CONFIG_PATH}|g" \
+        "$template" > "$output"
+}
 
 echo "[1/6] Installing system packages..."
 apt-get update -qq
@@ -28,42 +48,48 @@ if ! dpkg -s hailo-all >/dev/null 2>&1; then
     }
 fi
 
-echo "[2/6] Creating service user..."
-if ! id safetyvision >/dev/null 2>&1; then
-    useradd --system --create-home --shell /usr/sbin/nologin safetyvision
+echo "[2/6] Preparing runtime user..."
+if ! id "${RUN_USER}" >/dev/null 2>&1; then
+    useradd --create-home --shell /bin/bash "${RUN_USER}"
 fi
-usermod -aG audio,video safetyvision
+usermod -aG audio,video "${RUN_USER}"
 
-echo "[3/6] Deploying project to ${TARGET_DIR}..."
+echo "[3/6] Preparing project at ${TARGET_DIR}..."
 mkdir -p "${TARGET_DIR}"
-cp -r \
-    "${PROJECT_DIR}/src" \
-    "${PROJECT_DIR}/config" \
-    "${PROJECT_DIR}/assets" \
-    "${PROJECT_DIR}/scripts" \
-    "${PROJECT_DIR}/deploy" \
-    "${PROJECT_DIR}/pyproject.toml" \
-    "${PROJECT_DIR}/requirements.txt" \
-    "${TARGET_DIR}/"
+if [[ "${TARGET_DIR}" != "${PROJECT_DIR}" ]]; then
+    apt-get install -y -qq rsync
+    rsync -a \
+        --exclude ".git" \
+        --exclude ".venv" \
+        --exclude ".pytest_cache" \
+        --exclude "logs" \
+        --exclude "recordings" \
+        "${PROJECT_DIR}/" "${TARGET_DIR}/"
+fi
 
 mkdir -p "${TARGET_DIR}/models" "${TARGET_DIR}/logs" "${TARGET_DIR}/recordings"
+chown -R "${RUN_USER}:${RUN_GROUP}" \
+    "${TARGET_DIR}/config" \
+    "${TARGET_DIR}/models" \
+    "${TARGET_DIR}/logs" \
+    "${TARGET_DIR}/recordings"
 
 echo "[4/6] Creating virtual environment..."
 # --system-site-packages so the venv can import hailo_platform (apt-installed)
 python3 -m venv --system-site-packages "${TARGET_DIR}/.venv"
-"${TARGET_DIR}/.venv/bin/pip" install --upgrade pip setuptools wheel
-"${TARGET_DIR}/.venv/bin/pip" install -e "${TARGET_DIR}"
-"${TARGET_DIR}/.venv/bin/pip" install -e "${TARGET_DIR}[webui]"
+chown -R "${RUN_USER}:${RUN_GROUP}" "${TARGET_DIR}/.venv"
+sudo -u "${RUN_USER}" "${TARGET_DIR}/.venv/bin/pip" install --upgrade pip setuptools wheel
+sudo -u "${RUN_USER}" "${TARGET_DIR}/.venv/bin/pip" install -e "${TARGET_DIR}"
+sudo -u "${RUN_USER}" "${TARGET_DIR}/.venv/bin/pip" install -e "${TARGET_DIR}[webui]"
 
 echo "[5/6] Installing systemd services..."
-cp "${PROJECT_DIR}/deploy/safetyvision.service" /etc/systemd/system/
-cp "${PROJECT_DIR}/deploy/safetyvision-ui.service" /etc/systemd/system/
-cp "${PROJECT_DIR}/deploy/safetyvision-sudoers" /etc/sudoers.d/safetyvision
+render_template "${PROJECT_DIR}/deploy/safetyvision.service" /etc/systemd/system/safetyvision.service
+render_template "${PROJECT_DIR}/deploy/safetyvision-ui.service" /etc/systemd/system/safetyvision-ui.service
+render_template "${PROJECT_DIR}/deploy/safetyvision-sudoers" /etc/sudoers.d/safetyvision
 chmod 440 /etc/sudoers.d/safetyvision
 
-chown -R safetyvision:safetyvision "${TARGET_DIR}"
 mkdir -p /var/log/safetyvision
-chown -R safetyvision:safetyvision /var/log/safetyvision
+chown -R "${RUN_USER}:${RUN_GROUP}" /var/log/safetyvision
 
 echo "[6/6] Enabling services..."
 systemctl daemon-reload
@@ -71,11 +97,11 @@ systemctl enable safetyvision.service safetyvision-ui.service
 
 echo ""
 echo "=== Raspberry Pi setup complete ==="
+echo "Project directory:      ${TARGET_DIR}"
+echo "Service user/group:     ${RUN_USER}:${RUN_GROUP}"
+echo "Rendered config path:   ${CONFIG_PATH}"
 echo "1) Verify Hailo device: hailortcli fw-control identify"
 echo "2) Verify HEF present:  ls /usr/share/hailo-models/yolov6n_h8l.hef"
-echo "3) Edit RTSP URLs in:   ${TARGET_DIR}/config/safetyvision.raspberry.yaml"
-echo "4) Point the service at the Pi config if needed:"
-echo "   sudo systemctl edit safetyvision"
-echo "   (add Environment=SAFETYVISION_CONFIG=${TARGET_DIR}/config/safetyvision.raspberry.yaml)"
-echo "5) Start services:"
+echo "3) Edit RTSP URLs in:   ${CONFIG_PATH}"
+echo "4) Start services:"
 echo "   sudo systemctl restart safetyvision safetyvision-ui"
