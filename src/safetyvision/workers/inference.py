@@ -1,32 +1,19 @@
-"""Inference worker – runs YOLO ONNX/OpenVINO on frames, outputs detections."""
+"""Inference worker - delegates model I/O to a backend, handles zones + smoothing."""
 
 from __future__ import annotations
 
 import os
-import platform
 import threading
 import time
-from pathlib import Path
 from queue import Empty, Queue
-from typing import List, Optional
+from typing import Optional
 
-import cv2
-import numpy as np
 from loguru import logger
 
-from safetyvision.config import SafetyVisionConfig
+from safetyvision.config import CameraConfig, SafetyVisionConfig, get_effective_zone_thresholds
+from safetyvision.inference.backends import InferenceBackend, load_backend
 from safetyvision.types import Detection, DetectionEvent, FramePacket
-
-
-def _normalize_runtime(requested_runtime: str, machine: Optional[str] = None) -> str:
-    """Map unsupported runtime selections to compatible ones per architecture."""
-    machine_name = (machine or platform.machine() or "").lower()
-    is_arm = machine_name.startswith("arm") or machine_name.startswith("aarch64")
-
-    # OpenVINO on Raspberry Pi/ARM is commonly unavailable in this stack.
-    if requested_runtime == "openvino" and is_arm:
-        return "onnxruntime"
-    return requested_runtime
+from safetyvision.zones.distance import DistanceZoneStrategy
 
 
 def _pin_to_cores(cores: list[int]) -> None:
@@ -37,171 +24,28 @@ def _pin_to_cores(cores: list[int]) -> None:
         pass
 
 
-def _letterbox(frame: np.ndarray, target: int) -> tuple[np.ndarray, float, tuple[int, int]]:
-    """Resize with letterbox padding, return (padded, scale, (pad_w, pad_h))."""
-    h, w = frame.shape[:2]
-    scale = min(target / h, target / w)
-    new_w, new_h = int(w * scale), int(h * scale)
-    resized = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
-
-    pad_w = (target - new_w) // 2
-    pad_h = (target - new_h) // 2
-    padded = np.full((target, target, 3), 114, dtype=np.uint8)
-    padded[pad_h : pad_h + new_h, pad_w : pad_w + new_w] = resized
-    return padded, scale, (pad_w, pad_h)
-
-
-def _preprocess(frame: np.ndarray, input_size: int) -> tuple[np.ndarray, float, tuple[int, int]]:
-    """BGR frame -> NCHW float32 blob."""
-    padded, scale, pad = _letterbox(frame, input_size)
-    blob = padded[:, :, ::-1].transpose(2, 0, 1).astype(np.float32) / 255.0
-    return np.expand_dims(blob, 0), scale, pad
-
-
-def _nms(detections: List[Detection], iou_threshold: float) -> List[Detection]:
-    """Simple NMS over a list of Detection objects."""
-    if not detections:
-        return []
-
-    dets = sorted(detections, key=lambda d: d.confidence, reverse=True)
-    keep = []
-    while dets:
-        best = dets.pop(0)
-        keep.append(best)
-        remaining = []
-        for d in dets:
-            iou = _compute_iou(best, d)
-            if iou < iou_threshold:
-                remaining.append(d)
-        dets = remaining
-    return keep
-
-
-def _compute_iou(a: Detection, b: Detection) -> float:
-    x1 = max(a.x1, b.x1)
-    y1 = max(a.y1, b.y1)
-    x2 = min(a.x2, b.x2)
-    y2 = min(a.y2, b.y2)
-    inter = max(0, x2 - x1) * max(0, y2 - y1)
-    area_a = (a.x2 - a.x1) * (a.y2 - a.y1)
-    area_b = (b.x2 - b.x1) * (b.y2 - b.y1)
-    union = area_a + area_b - inter
-    return inter / union if union > 0 else 0.0
-
-
 def _classify_detection_zone(
     det: Detection,
     frame_h: int,
     cfg: SafetyVisionConfig,
+    camera: CameraConfig | None = None,
 ) -> str:
-    """Classify a detection into a horizontal band zone by footpoint Y.
-
-    Bands (top-to-bottom):
-        0.0  .. yellow_start_y  = green  (no sound)
-        yellow_start_y .. red_start_y = medium (yellow sound)
-        red_start_y .. 1.0      = danger (red sound)
-    """
+    """Classify a detection into a horizontal band zone by footpoint Y."""
     if frame_h <= 0:
         return ""
     foot_y = float(det.y2) / frame_h
     foot_y = min(max(foot_y, 0.0), 1.0)
+    yellow_start_y, red_start_y = get_effective_zone_thresholds(cfg, camera)
 
-    if foot_y >= cfg.alert.red_start_y:
+    if foot_y >= red_start_y:
         return "danger"
-    if foot_y >= cfg.alert.yellow_start_y:
+    if foot_y >= yellow_start_y:
         return "medium"
     return ""
 
 
-def _postprocess(
-    output: np.ndarray,
-    conf_thresh: float,
-    iou_thresh: float,
-    person_class_id: int,
-    scale: float,
-    pad: tuple[int, int],
-) -> List[Detection]:
-    """Parse YOLO output tensor into filtered person detections.
-
-    Supports two common YOLO output formats:
-      - (1, 84, N) – YOLOv8/YOLO11 style: 4 box coords + 80 class scores
-      - (1, N, 85) – YOLOv5 style: 4 box coords + objectness + 80 class scores
-    """
-    if output.ndim == 3:
-        output = output[0]
-    if output.ndim != 2:
-        logger.warning("Unexpected model output rank: {}", output.ndim)
-        return []
-
-    # Export with built-in NMS can produce (N, 6):
-    # [x1, y1, x2, y2, score, class_id]
-    if output.shape[1] == 6:
-        detections: List[Detection] = []
-        for row in output:
-            conf = float(row[4])
-            cls_id = int(row[5])
-            if cls_id != person_class_id or conf < conf_thresh:
-                continue
-            # These coordinates are already in original image space.
-            detections.append(
-                Detection(
-                    x1=float(row[0]),
-                    y1=float(row[1]),
-                    x2=float(row[2]),
-                    y2=float(row[3]),
-                    confidence=conf,
-                    class_id=cls_id,
-                )
-            )
-        return detections
-
-    # Detect format: (84|85, N) vs (N, 84|85)
-    # Use feature-dimension matching instead of shape ordering to avoid false transposes.
-    feature_dims = {84, 85}
-    rows, cols = output.shape
-    if cols in feature_dims and rows not in feature_dims:
-        parsed = output
-    elif rows in feature_dims and cols not in feature_dims:
-        parsed = output.T
-    elif cols in feature_dims:
-        parsed = output
-    elif rows in feature_dims:
-        parsed = output.T
-    else:
-        logger.warning("Unrecognized YOLO output shape: {}", output.shape)
-        return []
-
-    has_objectness = parsed.shape[1] > 84
-
-    detections: List[Detection] = []
-    for row in parsed:
-        if has_objectness:
-            # YOLOv5: [cx, cy, w, h, obj_conf, cls0, cls1, ...]
-            obj_conf = row[4]
-            class_scores = row[5:]
-            cls_id = int(np.argmax(class_scores))
-            conf = float(obj_conf * class_scores[cls_id])
-        else:
-            # YOLOv8: [cx, cy, w, h, cls0, cls1, ...]
-            class_scores = row[4:]
-            cls_id = int(np.argmax(class_scores))
-            conf = float(class_scores[cls_id])
-
-        if cls_id != person_class_id or conf < conf_thresh:
-            continue
-
-        cx, cy, w, h = row[0], row[1], row[2], row[3]
-        x1 = (cx - w / 2 - pad[0]) / scale
-        y1 = (cy - h / 2 - pad[1]) / scale
-        x2 = (cx + w / 2 - pad[0]) / scale
-        y2 = (cy + h / 2 - pad[1]) / scale
-        detections.append(Detection(x1=x1, y1=y1, x2=x2, y2=y2, confidence=conf, class_id=cls_id))
-
-    return _nms(detections, iou_thresh)
-
-
 class InferenceWorker:
-    """Runs YOLO inference on frames from input queue, pushes DetectionEvents."""
+    """Runs a single Hailo inference thread over the shared frame queue."""
 
     def __init__(
         self,
@@ -211,8 +55,7 @@ class InferenceWorker:
         stop_event: threading.Event,
         latency_cb=None,
         frame_cb=None,
-        zone_yellow_cb=None,
-        zone_red_cb=None,
+        backend: Optional[InferenceBackend] = None,
     ):
         self._cfg = cfg
         self._in_queue = in_queue
@@ -220,18 +63,40 @@ class InferenceWorker:
         self._stop = stop_event
         self._latency_cb = latency_cb
         self._frame_cb = frame_cb
-        self._zone_yellow_cb = zone_yellow_cb
-        self._zone_red_cb = zone_red_cb
-        self._session = None
-        self._pt_model = None
-        self._runtime_type = ""
+        self._backend = backend
         self._thread: Optional[threading.Thread] = None
-        # Temporal smoothing buffer
-        self._recent_detections: list[bool] = []
-        self._prev_zone_level: str = ""
+        self._smoothing: dict[str, list[bool]] = {}
+        self._camera_by_id = {camera.id: camera for camera in cfg.input.cameras}
+        self._distance_strategies: dict[str, DistanceZoneStrategy] = {}
+        for camera in cfg.input.cameras:
+            uses_global_distance = cfg.alert.zone_mode == "distance" and camera.id == "back"
+            if camera.mode != "distance" and not uses_global_distance:
+                continue
+            calibration_path = (
+                camera.distance.calibration_path
+                if camera.mode == "distance" and camera.distance.calibration_path
+                else cfg.alert.calibration_path
+            )
+            danger_m = (
+                camera.distance.danger_distance_m
+                if camera.mode == "distance"
+                else cfg.alert.danger_threshold_m
+            )
+            warning_m = (
+                camera.distance.warning_distance_m
+                if camera.mode == "distance"
+                else cfg.alert.warning_threshold_m
+            )
+            self._distance_strategies[camera.id] = DistanceZoneStrategy(
+                calibration_path=calibration_path,
+                danger_m=danger_m,
+                warning_m=warning_m,
+                smoothing_frames=cfg.alert.distance_smoothing_frames,
+            )
 
     def start(self) -> None:
-        self._load_model()
+        if self._backend is None:
+            self._backend = load_backend(self._cfg)
         self._thread = threading.Thread(
             target=self._run, name="inference_worker", daemon=True
         )
@@ -241,133 +106,48 @@ class InferenceWorker:
         self._stop.set()
         if self._thread:
             self._thread.join(timeout=5.0)
+        if self._backend is not None:
+            try:
+                self._backend.close()
+            except Exception as e:
+                logger.warning("Backend close error: {}", e)
+            self._backend = None
 
-    def _load_model(self) -> None:
-        requested_runtime = self._cfg.model.runtime
-        runtime = _normalize_runtime(requested_runtime)
+    def _apply_temporal_smoothing(self, camera_id: str, person_detected: bool) -> bool:
+        """Require majority of recent frames to agree per-camera."""
+        n = max(1, self._cfg.perf.temporal_smoothing_frames)
+        buf = self._smoothing.setdefault(camera_id, [])
+        buf.append(person_detected)
+        if len(buf) > n:
+            buf.pop(0)
+        return sum(buf) >= (n + 1) // 2
 
-        if runtime != requested_runtime:
-            logger.warning(
-                "Runtime '{}' is not supported on this architecture; using '{}' instead",
-                requested_runtime,
-                runtime,
-            )
+    def _classify_zone(
+        self,
+        camera_id: str,
+        camera_cfg: CameraConfig | None,
+        dets: list[Detection],
+        frame_h: int,
+        frame_w: int,
+    ) -> tuple[str, float | None]:
+        uses_global_distance = self._cfg.alert.zone_mode == "distance" and camera_id == "back"
+        if camera_cfg is not None and (camera_cfg.mode == "distance" or uses_global_distance):
+            strategy = self._distance_strategies.get(camera_id)
+            if strategy is not None:
+                result = strategy.classify(dets, frame_h, frame_w)
+                return result.zone_level, result.distance_m
 
-        if runtime == "openvino":
-            self._load_openvino()
-        elif runtime == "ultralytics":
-            self._load_ultralytics(self._cfg.model.path_pt)
-        else:
-            self._load_onnxruntime(self._cfg.model.path_onnx)
-
-    def _load_onnxruntime(self, model_path: str) -> None:
-        try:
-            import onnxruntime as ort
-
-            sess_opts = ort.SessionOptions()
-            sess_opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-            sess_opts.intra_op_num_threads = self._cfg.perf.inference_threads
-            sess_opts.inter_op_num_threads = 1
-            sess_opts.enable_cpu_mem_arena = True
-
-            self._session = ort.InferenceSession(
-                model_path, sess_options=sess_opts, providers=["CPUExecutionProvider"]
-            )
-            self._input_name = self._session.get_inputs()[0].name
-            self._runtime_type = "onnxruntime"
-            logger.info("ONNX Runtime model loaded: {}", model_path)
-        except Exception as e:
-            pt_path = Path(self._cfg.model.path_pt)
-            if pt_path.exists():
-                logger.warning(
-                    "ONNX Runtime unavailable ({}); falling back to Ultralytics PT model: {}",
-                    e,
-                    pt_path,
-                )
-                self._load_ultralytics(str(pt_path))
-                return
-            raise RuntimeError(
-                f"Failed to load ONNX Runtime model '{model_path}': {e}. "
-                "Install onnxruntime or provide model.path_pt for ultralytics fallback."
-            ) from e
-
-    def _load_openvino(self) -> None:
-        try:
-            from openvino.runtime import Core
-
-            ov_path = Path(self._cfg.model.path_openvino)
-            model_path = str(ov_path if ov_path.exists() else Path(self._cfg.model.path_onnx))
-            core = Core()
-            model = core.read_model(model_path)
-            config = {"INFERENCE_NUM_THREADS": str(self._cfg.perf.inference_threads)}
-            self._session = core.compile_model(model, "CPU", config)
-            self._infer_request = self._session.create_infer_request()
-            self._runtime_type = "openvino"
-            logger.info("OpenVINO model loaded: {}", model_path)
-        except Exception as e:
-            fallback_path = self._cfg.model.path_onnx
-            logger.warning(
-                "OpenVINO load failed ({}), falling back to ONNX Runtime with {}",
-                e,
-                fallback_path,
-            )
-            self._load_onnxruntime(fallback_path)
-
-    def _load_ultralytics(self, model_path: str) -> None:
-        try:
-            from ultralytics import YOLO
-
-            self._pt_model = YOLO(model_path)
-            self._runtime_type = "ultralytics"
-            logger.info("Ultralytics PT model loaded: {}", model_path)
-        except Exception as e:
-            raise RuntimeError(
-                f"Failed to load Ultralytics PT model '{model_path}': {e}"
-            ) from e
-
-    def _infer(self, blob: np.ndarray) -> np.ndarray:
-        if self._runtime_type == "openvino":
-            self._infer_request.infer({0: blob})
-            return self._infer_request.get_output_tensor(0).data.copy()
-        else:
-            return self._session.run(None, {self._input_name: blob})[0]
-
-    def _infer_pt(self, frame: np.ndarray) -> np.ndarray:
-        """Run Ultralytics PT inference and return Nx6 [x1,y1,x2,y2,conf,cls]."""
-        results = self._pt_model.predict(
-            source=frame,
-            imgsz=self._cfg.model.input_size,
-            conf=self._cfg.model.conf_threshold,
-            iou=self._cfg.model.iou_threshold,
-            verbose=False,
-            device="cpu",
-            classes=[self._cfg.model.person_class_id],
-        )
-        if not results:
-            return np.empty((0, 6), dtype=np.float32)
-
-        boxes = results[0].boxes
-        if boxes is None or boxes.data is None:
-            return np.empty((0, 6), dtype=np.float32)
-        data = boxes.data
-        if hasattr(data, "detach"):
-            data = data.detach().cpu().numpy()
-        else:
-            data = np.asarray(data)
-        return data.astype(np.float32, copy=False)
-
-    def _apply_temporal_smoothing(self, person_detected: bool) -> bool:
-        """Require N consecutive frames of detection to confirm presence."""
-        n = self._cfg.perf.temporal_smoothing_frames
-        self._recent_detections.append(person_detected)
-        if len(self._recent_detections) > n:
-            self._recent_detections.pop(0)
-        # Person confirmed only if majority of recent frames agree
-        return sum(self._recent_detections) >= (n + 1) // 2
+        zone_level = ""
+        for det in dets:
+            zone = _classify_detection_zone(det, frame_h, self._cfg, camera_cfg)
+            if zone == "danger":
+                return "danger", None
+            if zone == "medium":
+                zone_level = "medium"
+        return zone_level, None
 
     def _run(self) -> None:
         _pin_to_cores(self._cfg.perf.inference_cpu_cores)
-        input_size = self._cfg.model.input_size
 
         while not self._stop.is_set():
             try:
@@ -376,36 +156,21 @@ class InferenceWorker:
                 continue
 
             t0 = time.time_ns()
-            if self._runtime_type == "ultralytics":
-                raw_out = self._infer_pt(pkt.frame)
-                scale, pad = 1.0, (0, 0)
-            else:
-                blob, scale, pad = _preprocess(pkt.frame, input_size)
-                raw_out = self._infer(blob)
-            dets = _postprocess(
-                raw_out,
-                self._cfg.model.conf_threshold,
-                self._cfg.model.iou_threshold,
-                self._cfg.model.person_class_id,
-                scale,
-                pad,
-            )
+            try:
+                dets = self._backend.infer(pkt.frame)
+            except Exception as e:
+                logger.error("Inference failure: {}", e)
+                continue
             t1 = time.time_ns()
 
+            frame_h, frame_w = pkt.frame.shape[:2]
             raw_detected = len(dets) > 0
-            smoothed = self._apply_temporal_smoothing(raw_detected)
+            smoothed = self._apply_temporal_smoothing(pkt.camera_id, raw_detected)
             max_conf = max((d.confidence for d in dets), default=0.0)
-            frame_h = pkt.frame.shape[0]
-
-            # Multi-person: highest-risk band wins (danger > medium > green)
-            zone_level = ""
-            for d in dets:
-                zone = _classify_detection_zone(d, frame_h, self._cfg)
-                if zone == "danger":
-                    zone_level = "danger"
-                    break  # can't get higher
-                if zone == "medium":
-                    zone_level = "medium"
+            camera_cfg = self._camera_by_id.get(pkt.camera_id)
+            zone_level, distance_m = self._classify_zone(
+                pkt.camera_id, camera_cfg, dets, frame_h, frame_w
+            )
 
             if zone_level == "medium" and self._prev_zone_level == "":
                 if self._zone_yellow_cb:
@@ -421,10 +186,11 @@ class InferenceWorker:
                 confidence_max=max_conf,
                 bbox_count=len(dets),
                 zone_level=zone_level,
-                source_id=pkt.source_id,
+                camera_id=pkt.camera_id,
+                distance_m=distance_m,
             )
 
-            # Non-blocking push to decision queue
+            # Drain and push latest event to keep decision queue fresh.
             while not self._out_queue.empty():
                 try:
                     self._out_queue.get_nowait()

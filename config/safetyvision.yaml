@@ -1,23 +1,28 @@
-# SafetyVision Production Configuration
-# ──────────────────────────────────────
+# SafetyVision Production Configuration (Raspberry Pi 5 + Hailo-8L)
+# ────────────────────────────────────────────────────────────────
 
 input:
-  mode: rtsp                       # rtsp | auto | usb
-  # Sub stream (640x480, 25fps) for YOLO detection
-  rtsp_url: "rtsp://admin:matrix18@192.168.1.108:554/cam/realmonitor?channel=1&subtype=1"
-  # Main stream (1280x720, 15fps) for web UI live view
-  rtsp_url_main: "rtsp://admin:matrix18@192.168.1.108:554/cam/realmonitor?channel=1&subtype=0"
-  usb_device: "/dev/video0"
+  # One entry per camera. Detection runs on the sub stream; the main stream
+  # is optional and only used by the web UI live preview.
+  cameras:
+    - id: back
+      rtsp_url: "rtsp://admin:matrix18@192.168.1.108:554/cam/realmonitor?channel=1&subtype=1"
+      rtsp_url_main: "rtsp://admin:matrix18@192.168.1.108:554/cam/realmonitor?channel=1&subtype=0"
+      mode: zone
+      zone:
+        yellow_start_y: 0.29
+        red_start_y: 0.78
+      distance:
+        warning_distance_m: 2.0
+        danger_distance_m: 1.0
+        calibration_path: "config/calibration/back.yaml"
   width: 640
   height: 480
-  fps: 25
+  target_fps: 15
 
 model:
-  path_onnx: "models/yolo26n.onnx"
-  path_openvino: "models/yolo26n_openvino_model/yolo26n.xml"
-  path_pt: "models/yolo26n.pt"
-  runtime: onnxruntime
-  input_size: 512
+  runtime: hailo
+  path_hef: "/usr/share/hailo-models/yolov6n_h8l.hef"
   conf_threshold: 0.50
   iou_threshold: 0.50
   person_class_id: 0
@@ -25,8 +30,16 @@ model:
 alert:
   siren_wav: "assets/audio/danger.wav"
   voice_wav: "assets/audio/medium.wav"
+  # Zone classification: "bands" (Y-thresholds) or "distance" (homography meters).
+  # Toggle via the calibration UI; do not edit by hand once distance mode is in use.
+  zone_mode: bands
   yellow_start_y: 0.29
   red_start_y: 0.78
+  # Distance-mode parameters (only used when zone_mode == "distance").
+  calibration_path: "config/calibration_back.json"
+  danger_threshold_m: 1.0
+  warning_threshold_m: 5.0
+  distance_smoothing_frames: 3
   min_alert_confidence: 0.55
   always_announce_person: false
   repeat_interval_sec: 3.0
@@ -36,8 +49,9 @@ perf:
   max_queue_size: 1
   capture_cpu_cores: [0]
   inference_cpu_cores: [1, 2, 3]
-  inference_threads: 4
-  temporal_smoothing_frames: 5
+  temporal_smoothing_frames: 3
+  shm_snapshot_dir: "/dev/shm/safetyvision"
+  shm_snapshot_interval_sec: 1.0
 
 logging:
   level: INFO

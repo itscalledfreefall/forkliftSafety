@@ -5,11 +5,11 @@ Wants=network.target
 
 [Service]
 Type=simple
-User=safetyvision
-Group=safetyvision
+User=@RUN_USER@
+Group=@RUN_GROUP@
 SupplementaryGroups=audio video
-WorkingDirectory=/opt/safetyvision
-ExecStart=/opt/safetyvision/.venv/bin/safetyvision -c /opt/safetyvision/config/safetyvision.yaml
+WorkingDirectory=@TARGET_DIR@
+ExecStart=@VENV_DIR@/bin/python -m safetyvision.supervisor -c @CONFIG_PATH@
 Restart=always
 RestartSec=2
 CPUAffinity=0 1 2 3
@@ -17,7 +17,8 @@ LimitNOFILE=8192
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=safetyvision
-Environment=SAFETYVISION_CONFIG=/opt/safetyvision/config/safetyvision.yaml
+Environment=SAFETYVISION_CONFIG=@CONFIG_PATH@
+Environment=PYTHONPATH=@TARGET_DIR@/src
 
 [Install]
 WantedBy=multi-user.target

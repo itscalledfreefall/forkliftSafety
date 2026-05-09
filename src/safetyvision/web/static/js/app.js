@@ -94,6 +94,153 @@
   }
   startStream();
 
+  function escapeHtml(value) {
+    return String(value || '').replace(/[&<>"']/g, char => ({
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;',
+    }[char]));
+  }
+
+  function cameraCardMarkup(camera) {
+    const effectiveZone = camera.effective_zone || {};
+    const zone = camera.zone || {};
+    const distance = camera.distance || {};
+    const yellow = Number(zone.yellow_start_y ?? effectiveZone.yellow_start_y ?? 0.33);
+    const red = Number(zone.red_start_y ?? effectiveZone.red_start_y ?? 0.66);
+    const warningDistance = Number(distance.warning_distance_m ?? 2.0);
+    const dangerDistance = Number(distance.danger_distance_m ?? 1.0);
+    const calibrationPath = distance.calibration_path || '';
+    const mode = camera.mode || 'zone';
+
+    return `
+      <article class="camera-card" data-camera-id="${escapeHtml(camera.id)}">
+        <div class="camera-card-header">
+          <div>
+            <h3>${escapeHtml(camera.id)}</h3>
+            <p class="camera-card-subtitle">${escapeHtml(camera.rtsp_url_main || camera.rtsp_url || '')}</p>
+          </div>
+          <span class="camera-mode-badge">${escapeHtml(mode)}</span>
+        </div>
+        <div class="form-grid camera-grid">
+          <div class="form-group">
+            <label>Mode</label>
+            <select class="camera-mode-select">
+              <option value="zone" ${mode === 'zone' ? 'selected' : ''}>Zone</option>
+              <option value="distance" ${mode === 'distance' ? 'selected' : ''}>Distance</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="camera-mode-section camera-zone-fields">
+          <div class="form-grid camera-grid">
+            <div class="form-group">
+              <label>Yellow Start Y</label>
+              <input type="number" class="camera-zone-yellow" step="0.01" min="0.01" max="0.99" value="${yellow.toFixed(2)}">
+            </div>
+            <div class="form-group">
+              <label>Red Start Y</label>
+              <input type="number" class="camera-zone-red" step="0.01" min="0.01" max="0.99" value="${red.toFixed(2)}">
+            </div>
+          </div>
+        </div>
+
+        <div class="camera-mode-section camera-distance-fields">
+          <div class="form-grid camera-grid">
+            <div class="form-group">
+              <label>Warning Distance (m)</label>
+              <input type="number" class="camera-warning-distance" step="0.1" min="0.1" value="${warningDistance.toFixed(1)}">
+            </div>
+            <div class="form-group">
+              <label>Danger Distance (m)</label>
+              <input type="number" class="camera-danger-distance" step="0.1" min="0.1" value="${dangerDistance.toFixed(1)}">
+            </div>
+            <div class="form-group camera-wide-field">
+              <label>Calibration Path</label>
+              <input type="text" class="camera-calibration-path" value="${escapeHtml(calibrationPath)}" placeholder="config/calibration/back.yaml">
+            </div>
+          </div>
+          <p class="camera-mode-note">Distance mode is stored in config now. The rear-camera metric distance calculation is the next implementation step.</p>
+        </div>
+
+        <div class="camera-card-actions">
+          <button class="btn-primary save-camera-btn">Save Camera</button>
+        </div>
+      </article>
+    `;
+  }
+
+  function bindCameraCard(card) {
+    const modeSelect = card.querySelector('.camera-mode-select');
+    const badge = card.querySelector('.camera-mode-badge');
+    const zoneFields = card.querySelector('.camera-zone-fields');
+    const distanceFields = card.querySelector('.camera-distance-fields');
+    const saveButton = card.querySelector('.save-camera-btn');
+
+    function refreshMode() {
+      const mode = modeSelect.value;
+      badge.textContent = mode;
+      zoneFields.style.display = mode === 'zone' ? 'block' : 'none';
+      distanceFields.style.display = mode === 'distance' ? 'block' : 'none';
+    }
+
+    modeSelect.addEventListener('change', refreshMode);
+    refreshMode();
+
+    saveButton.addEventListener('click', async () => {
+      const cameraId = card.dataset.cameraId;
+      const payload = {
+        mode: modeSelect.value,
+        zone: {
+          yellow_start_y: parseFloat(card.querySelector('.camera-zone-yellow').value),
+          red_start_y: parseFloat(card.querySelector('.camera-zone-red').value),
+        },
+        distance: {
+          warning_distance_m: parseFloat(card.querySelector('.camera-warning-distance').value),
+          danger_distance_m: parseFloat(card.querySelector('.camera-danger-distance').value),
+          calibration_path: card.querySelector('.camera-calibration-path').value.trim(),
+        },
+      };
+
+      try {
+        const res = await fetch('/api/config/cameras/' + encodeURIComponent(cameraId), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          toast(data.detail || 'Camera save failed', 'error');
+          return;
+        }
+        toast(cameraId + ' saved');
+        await loadCameraConfigs();
+      } catch {
+        toast('Connection error', 'error');
+      }
+    });
+  }
+
+  async function loadCameraConfigs() {
+    const container = document.getElementById('cameraCards');
+    if (!container) return;
+    try {
+      const res = await fetch('/api/config/cameras');
+      if (res.status === 401) { window.location.href = '/login'; return; }
+      const cameras = await res.json();
+      if (!Array.isArray(cameras) || cameras.length === 0) {
+        container.innerHTML = '<p class="help-text">No cameras configured.</p>';
+        return;
+      }
+      container.innerHTML = cameras.map(cameraCardMarkup).join('');
+      container.querySelectorAll('.camera-card').forEach(bindCameraCard);
+    } catch {
+      container.innerHTML = '<p class="help-text">Unable to load camera settings.</p>';
+    }
+  }
+
   // ── Load Config ─────────────────────────────────────────────
   async function loadConfig() {
     try {
@@ -115,6 +262,7 @@
       document.getElementById('repeatInterval').value = alert.repeat_interval_sec || 1.5;
       document.getElementById('minClear').value = alert.min_clear_sec || 3.0;
       document.getElementById('minConfidence').value = alert.min_alert_confidence || 0.55;
+      await loadCameraConfigs();
     } catch {}
   }
   loadConfig();
@@ -156,7 +304,10 @@
         body: JSON.stringify({ yellow_start_y: yy, red_start_y: ry }),
       });
       const data = await res.json();
-      if (res.ok) toast('Zones saved');
+      if (res.ok) {
+        toast('Zones saved');
+        await loadCameraConfigs();
+      }
       else toast(data.detail || 'Save failed', 'error');
     } catch { toast('Connection error', 'error'); }
   });

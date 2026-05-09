@@ -16,7 +16,7 @@ class FramePacket:
 
     frame: np.ndarray
     timestamp_ns: int = field(default_factory=time.time_ns)
-    source_id: str = ""
+    camera_id: str = ""
     seq: int = 0
 
 
@@ -24,8 +24,11 @@ class FramePacket:
 class DetectionEvent:
     """Output of inference + zone classification.
 
-    zone_level is the highest-risk horizontal band any detected person's
-    footpoint falls into: "danger" | "medium" | "" (green / no person).
+    zone_level is the highest-risk zone any detected person's footpoint
+    falls into: "danger" | "medium" | "" (green / no person).
+
+    distance_m is set in distance mode (meters from forklift origin to the
+    closest person). None in band mode.
     """
 
     timestamp_ns: int
@@ -33,18 +36,20 @@ class DetectionEvent:
     confidence_max: float
     bbox_count: int
     zone_level: str = ""          # "danger" | "medium" | ""
-    source_id: str = ""
+    camera_id: str = ""
+    distance_m: Optional[float] = None
 
 
 @dataclass(slots=True)
 class AlertEvent:
-    """Issued when the alert worker acts on a detection."""
+    """Issued when the decision worker acts on a detection."""
 
     timestamp_ns: int
     trigger_reason: str
     cooldown_active: bool
     sound_key: str = "danger"
     audio_started_ms: float = 0.0
+    camera_id: str = ""
 
 
 class AlertState(Enum):
@@ -84,3 +89,7 @@ class PipelineMetrics:
     yellow_zone_entries: int = 0
     red_zone_entries: int = 0
     uptime_sec: float = 0.0
+    # Last detection event fields (populated only in distance mode for the
+    # distance value; zone_level is populated in both modes).
+    last_distance_m: Optional[float] = None
+    last_zone_level: str = ""

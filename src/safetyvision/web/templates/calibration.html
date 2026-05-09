@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SafetyVision — Distance Calibration</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+  <link rel="stylesheet" href="/static/css/calibration.css">
+  <script src="/static/vendor/lucide.min.js"></script>
+</head>
+<body>
+<div id="app">
+
+  <header>
+    <a class="logo" href="/">
+      <div class="logo-icon">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+          <path d="M8 2L13.5 5V11L8 14L2.5 11V5L8 2Z" stroke="white" stroke-width="1.5" stroke-linejoin="round"/>
+          <circle cx="8" cy="8" r="2" fill="white"/>
+        </svg>
+      </div>
+      <span class="logo-wordmark">Safety<span>Vision</span></span>
+    </a>
+
+    <div class="mode-badge bands" id="modeBadge">--</div>
+
+    <div class="header-spacer"></div>
+
+    <div class="header-actions">
+      <a href="/" class="btn-ghost">
+        <i data-lucide="layout-dashboard" style="width:14px;height:14px;"></i>
+        <span class="btn-label">Dashboard</span>
+      </a>
+      <button class="btn-ghost active" type="button" disabled style="cursor:default;">
+        <i data-lucide="sliders-horizontal" style="width:14px;height:14px;"></i>
+        <span class="btn-label">Calibration</span>
+      </button>
+      <button id="logoutBtn" class="btn-outline">
+        <i data-lucide="log-out" style="width:14px;height:14px;"></i>
+        <span class="btn-label">Logout</span>
+      </button>
+    </div>
+  </header>
+
+  <main>
+
+    <!-- Page title block -->
+    <div class="page-title-block">
+      <div class="breadcrumb">
+        <a href="/">Dashboard</a>
+        <i data-lucide="chevron-right" style="width:12px;height:12px;"></i>
+        <span class="crumb-current">Distance Calibration</span>
+      </div>
+      <div class="page-title">
+        <i data-lucide="crosshair" style="width:20px;height:20px;color:var(--primary);"></i>
+        Distance Calibration
+        <span class="camera-badge">BACK CAMERA</span>
+      </div>
+      <div class="page-subtitle">
+        <i data-lucide="info" style="width:14px;height:14px;color:var(--primary);"></i>
+        Click 4 ground points in any order on the captured frame, then enter each point's
+        real-world position relative to the forklift center in meters. All 4 points must lie on
+        the floor. X = lateral (right is +), Y = longitudinal (forward is +).
+      </div>
+    </div>
+
+    <div class="two-col">
+
+      <!-- ── Left: frame ───────────────────────────────────────── -->
+      <div class="frame-col">
+        <div class="frame-actions">
+          <button id="captureBtn" class="btn-primary">
+            <i data-lucide="camera" style="width:14px;height:14px;"></i>
+            Capture Frame
+          </button>
+          <button id="resetPointsBtn" class="btn-secondary">
+            <i data-lucide="rotate-ccw" style="width:14px;height:14px;"></i>
+            Reset Points
+          </button>
+          <div class="frame-hint" id="frameStatus">
+            <i data-lucide="mouse-pointer-2" style="width:11px;height:11px;"></i>
+            Click frame to place point
+          </div>
+        </div>
+
+        <div class="frame-wrapper">
+          <div class="canvas-wrap" id="canvasWrap">
+            <canvas id="frameCanvas" width="640" height="480"></canvas>
+            <div id="canvasPlaceholder" class="canvas-placeholder">
+              Click <strong>Capture Frame</strong> to load the latest camera image.
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Right: controls ───────────────────────────────────── -->
+      <div class="controls-col">
+
+        <!-- Forklift coordinate frame -->
+        <div class="panel">
+          <div class="panel-header">
+            <i data-lucide="compass" style="width:14px;height:14px;color:var(--primary);"></i>
+            Forklift Coordinate Frame
+            <span class="dim">top-down view</span>
+          </div>
+          <div class="panel-body">
+            <div class="coord-diagram">
+              <svg viewBox="0 0 300 200" xmlns="http://www.w3.org/2000/svg" style="overflow:visible;">
+                <!-- Grid -->
+                <line x1="40"  y1="100" x2="260" y2="100" stroke="rgba(45,51,59,0.6)" stroke-width="0.8"/>
+                <line x1="150" y1="20"  x2="150" y2="180" stroke="rgba(45,51,59,0.6)" stroke-width="0.8"/>
+                <line x1="100" y1="20"  x2="100" y2="180" stroke="rgba(45,51,59,0.3)" stroke-width="0.5" stroke-dasharray="3,4"/>
+                <line x1="200" y1="20"  x2="200" y2="180" stroke="rgba(45,51,59,0.3)" stroke-width="0.5" stroke-dasharray="3,4"/>
+                <line x1="40"  y1="60"  x2="260" y2="60"  stroke="rgba(45,51,59,0.3)" stroke-width="0.5" stroke-dasharray="3,4"/>
+                <line x1="40"  y1="140" x2="260" y2="140" stroke="rgba(45,51,59,0.3)" stroke-width="0.5" stroke-dasharray="3,4"/>
+
+                <!-- Forklift body (top-down) -->
+                <rect x="118" y="88" width="64" height="44" rx="3" fill="#1e2840" stroke="#2d3a55" stroke-width="1.2"/>
+                <rect x="124" y="92" width="22" height="16" rx="2" fill="#2a3550"/>
+                <!-- Forks pointing forward (up = Y+) -->
+                <rect x="128" y="60" width="5" height="30" rx="1" fill="#3a4a70"/>
+                <rect x="140" y="60" width="5" height="30" rx="1" fill="#3a4a70"/>
+                <!-- Wheels -->
+                <circle cx="122" cy="88"  r="5" fill="#111418" stroke="#2d3a55" stroke-width="1.5"/>
+                <circle cx="178" cy="88"  r="5" fill="#111418" stroke="#2d3a55" stroke-width="1.5"/>
+                <circle cx="122" cy="132" r="5" fill="#111418" stroke="#2d3a55" stroke-width="1.5"/>
+                <circle cx="178" cy="132" r="5" fill="#111418" stroke="#2d3a55" stroke-width="1.5"/>
+
+                <!-- Origin -->
+                <circle cx="150" cy="110" r="3.5" fill="#E6EDF3"/>
+                <text x="155" y="121" font-size="9" fill="#7D8590" font-family="JetBrains Mono,monospace">(0,0)</text>
+
+                <!-- X+ axis (right) -->
+                <line x1="150" y1="100" x2="240" y2="100" stroke="#2F81F7" stroke-width="1.5"/>
+                <polygon points="240,96 248,100 240,104" fill="#2F81F7"/>
+                <text x="250" y="104" font-size="10" fill="#2F81F7" font-family="JetBrains Mono,monospace" font-weight="600">X+</text>
+                <text x="194" y="96"  font-size="8"  fill="#7D8590" font-family="JetBrains Mono,monospace">right</text>
+
+                <!-- Y+ axis (forward) -->
+                <line x1="150" y1="100" x2="150" y2="28" stroke="#3FB950" stroke-width="1.5"/>
+                <polygon points="146,28 150,20 154,28" fill="#3FB950"/>
+                <text x="155" y="26" font-size="10" fill="#3FB950" font-family="JetBrains Mono,monospace" font-weight="600">Y+</text>
+                <text x="154" y="42" font-size="8"  fill="#7D8590" font-family="JetBrains Mono,monospace">fwd</text>
+
+                <!-- Scale ticks -->
+                <line x1="100" y1="97" x2="100" y2="103" stroke="rgba(125,133,144,0.5)" stroke-width="1"/>
+                <text x="93"  y="114" font-size="8" fill="#7D8590" font-family="JetBrains Mono,monospace">−1m</text>
+                <line x1="200" y1="97" x2="200" y2="103" stroke="rgba(125,133,144,0.5)" stroke-width="1"/>
+                <text x="194" y="114" font-size="8" fill="#7D8590" font-family="JetBrains Mono,monospace">1m</text>
+                <line x1="147" y1="60" x2="153" y2="60" stroke="rgba(125,133,144,0.5)" stroke-width="1"/>
+                <text x="155" y="63" font-size="8" fill="#7D8590" font-family="JetBrains Mono,monospace">1m</text>
+                <line x1="147" y1="140" x2="153" y2="140" stroke="rgba(125,133,144,0.5)" stroke-width="1"/>
+                <text x="155" y="143" font-size="8" fill="#7D8590" font-family="JetBrains Mono,monospace">−1m</text>
+              </svg>
+            </div>
+          </div>
+        </div>
+
+        <!-- Points panel (rows rendered by calibration.js into #pointInputs) -->
+        <div class="panel">
+          <div class="panel-header">
+            <i data-lucide="map-pin" style="width:14px;height:14px;color:var(--primary);"></i>
+            Points
+          </div>
+          <div class="panel-body" style="padding:8px;">
+            <div id="pointInputs" class="point-rows">
+              <div class="point-empty">Click 4 points on the captured frame to begin.</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Action stack -->
+        <div class="action-stack">
+          <button id="saveBtn" class="btn-primary" disabled>
+            <i data-lucide="save" style="width:14px;height:14px;"></i>
+            Save Calibration
+          </button>
+          <button id="enableBtn" class="btn-danger" disabled>
+            <i data-lucide="ruler" style="width:14px;height:14px;"></i>
+            Enable Distance Mode
+          </button>
+          <button id="disableBtn" class="btn-secondary" disabled>
+            <i data-lucide="layers" style="width:14px;height:14px;"></i>
+            Switch to Band Mode
+          </button>
+        </div>
+
+        <!-- Status line -->
+        <div id="actionStatus" class="status-line"></div>
+      </div>
+
+    </div>
+
+  </main>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script src="/static/js/calibration.js"></script>
+</body>
+</html>

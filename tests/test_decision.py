@@ -5,9 +5,12 @@ from queue import Queue
 
 import pytest
 
-from safetyvision.config import SafetyVisionConfig
+from safetyvision.config import CameraConfig, SafetyVisionConfig
 from safetyvision.types import AlertState, DetectionEvent
 from safetyvision.workers.decision import DecisionWorker
+
+
+TEST_CAM = "test"
 
 
 def _make_event(
@@ -15,6 +18,7 @@ def _make_event(
     ts_ns: int = 0,
     conf: float = 0.8,
     zone_level: str = "",
+    camera_id: str = TEST_CAM,
 ) -> DetectionEvent:
     return DetectionEvent(
         timestamp_ns=ts_ns,
@@ -22,19 +26,41 @@ def _make_event(
         confidence_max=conf if person else 0.0,
         bbox_count=1 if person else 0,
         zone_level=zone_level if person else "",
-        source_id="test",
+        camera_id=camera_id,
     )
+
+
+class _WorkerProxy:
+    """Thin wrapper exposing per-camera state as attributes for test ergonomics."""
+
+    def __init__(self, worker: DecisionWorker, camera_id: str) -> None:
+        self._w = worker
+        self._cam = camera_id
+
+    @property
+    def state(self):
+        return self._w.state_for(self._cam)
+
+    @property
+    def alert_count(self):
+        return self._w.alert_count
+
+    def process_event(self, event):
+        return self._w.process_event(event)
 
 
 @pytest.fixture
 def worker():
     """Decision worker with default band config (0.33/0.66 cut lines)."""
     cfg = SafetyVisionConfig()
+    cfg.input.cameras = [CameraConfig(id=TEST_CAM, rtsp_url="rtsp://x/y")]
     cfg.alert.repeat_interval_sec = 5.0
     cfg.alert.min_clear_sec = 3.0
     cfg.alert.min_alert_confidence = 0.60
     cfg.alert.always_announce_person = False
-    return DecisionWorker(cfg, Queue(), Queue(), threading.Event())
+    return _WorkerProxy(
+        DecisionWorker(cfg, Queue(), Queue(), threading.Event()), TEST_CAM
+    )
 
 
 class TestAlertStateMachine:

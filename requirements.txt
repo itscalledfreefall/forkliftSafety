@@ -1,6 +1,5 @@
 numpy>=1.26
 opencv-python-headless>=4.9
-onnxruntime>=1.17
 pyyaml>=6.0
 sounddevice>=0.4
 loguru>=0.7
