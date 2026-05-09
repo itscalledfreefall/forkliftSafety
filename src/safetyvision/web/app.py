@@ -335,6 +335,8 @@ def _normalize_metrics(payload: dict) -> dict:
         "latency_total_ms": _coerce_metric(payload, "latency_total_ms"),
         "frames_dropped": int(_coerce_metric(payload, "frames_dropped")),
         "alerts": int(_coerce_metric(payload, "alerts")),
+        "yellow_zone_entries": int(_coerce_metric(payload, "yellow_zone_entries")),
+        "red_zone_entries": int(_coerce_metric(payload, "red_zone_entries")),
         "uptime_s": _coerce_metric(payload, "uptime_s"),
         "last_distance_m": last_distance_m,
         "last_zone_level": last_zone_level,
@@ -534,6 +536,19 @@ def _draw_zone_overlay(frame: np.ndarray, yellow_y: float, red_y: float) -> np.n
     frame = cv2.addWeighted(overlay, 0.2, frame, 0.8, 0)
     cv2.line(frame, (0, y_yel), (w, y_yel), (0, 220, 255), 2)
     cv2.line(frame, (0, y_red), (w, y_red), (0, 0, 255), 2)
+
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    scale = 0.6
+    thick = 2
+    labels = [
+        ("GREEN", 18, (0, 200, 0)),
+        ("YELLOW", y_yel + 22, (0, 220, 255)),
+        ("RED", y_red + 22, (0, 0, 255)),
+    ]
+    for text, y, color in labels:
+        cv2.putText(frame, text, (10, y), font, scale, (0, 0, 0), thick + 2, cv2.LINE_AA)
+        cv2.putText(frame, text, (10, y), font, scale, color, thick, cv2.LINE_AA)
+
     return frame
 
 

@@ -172,6 +172,14 @@ class InferenceWorker:
                 pkt.camera_id, camera_cfg, dets, frame_h, frame_w
             )
 
+            if zone_level == "medium" and self._prev_zone_level == "":
+                if self._zone_yellow_cb:
+                    self._zone_yellow_cb()
+            elif zone_level == "danger" and self._prev_zone_level in ("", "medium"):
+                if self._zone_red_cb:
+                    self._zone_red_cb()
+            self._prev_zone_level = zone_level
+
             event = DetectionEvent(
                 timestamp_ns=pkt.timestamp_ns,
                 person_detected=smoothed,

@@ -86,6 +86,8 @@ class PipelineMetrics:
     total_latency_ms: float = 0.0
     frames_dropped: int = 0
     alert_count: int = 0
+    yellow_zone_entries: int = 0
+    red_zone_entries: int = 0
     uptime_sec: float = 0.0
     # Last detection event fields (populated only in distance mode for the
     # distance value; zone_level is populated in both modes).

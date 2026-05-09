@@ -272,6 +272,19 @@ main { max-width: 1400px; margin: 0 auto; }
   width: 100%;
 }
 
+.metric-card.metric-yellow {
+  border-color: var(--yellow);
+}
+.metric-card.metric-yellow .metric-value {
+  color: var(--yellow);
+}
+.metric-card.metric-red {
+  border-color: var(--red);
+}
+.metric-card.metric-red .metric-value {
+  color: var(--red);
+}
+
 .metric-label {
   font-size: 0.75rem;
   color: var(--text-dim);

@@ -29,6 +29,8 @@ class MetricsCollector:
         self._decision_latencies: deque[float] = deque()
         self._frames_dropped = 0
         self._alert_count = 0
+        self._yellow_zone_entries = 0
+        self._red_zone_entries = 0
         self._start_time = time.monotonic()
         # Last detection event values (overwritten each event)
         self._last_distance_m: Optional[float] = None
@@ -129,6 +131,8 @@ class MetricsCollector:
                 ),
                 frames_dropped=self._frames_dropped,
                 alert_count=self._alert_count,
+                yellow_zone_entries=self._yellow_zone_entries,
+                red_zone_entries=self._red_zone_entries,
                 uptime_sec=round(now - self._start_time, 1),
                 last_distance_m=round(distance, 2) if distance is not None else None,
                 last_zone_level=self._last_zone_level,
@@ -183,6 +187,8 @@ class MetricsWorker:
                     "latency_total_ms": snap.total_latency_ms,
                     "frames_dropped": snap.frames_dropped,
                     "alerts": snap.alert_count,
+                    "yellow_zone_entries": snap.yellow_zone_entries,
+                    "red_zone_entries": snap.red_zone_entries,
                     "uptime_s": snap.uptime_sec,
                     "last_distance_m": snap.last_distance_m,
                     "last_zone_level": snap.last_zone_level,
@@ -190,12 +196,14 @@ class MetricsWorker:
                 logger.info(json.dumps(record))
             else:
                 logger.info(
-                    "FPS(inf)={} capture={} decision={} lat={:.1f}ms dropped={} alerts={} up={:.0f}s",
+                    "FPS(inf)={} capture={} decision={} lat={:.1f}ms dropped={} alerts={} yel={} red={} up={:.0f}s",
                     snap.fps,
                     snap.capture_fps,
                     snap.decision_fps,
                     snap.total_latency_ms,
                     snap.frames_dropped,
                     snap.alert_count,
+                    snap.yellow_zone_entries,
+                    snap.red_zone_entries,
                     snap.uptime_sec,
                 )
