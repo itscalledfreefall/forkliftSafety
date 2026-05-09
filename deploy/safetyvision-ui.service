@@ -9,7 +9,7 @@ User=@RUN_USER@
 Group=@RUN_GROUP@
 SupplementaryGroups=audio video
 WorkingDirectory=@TARGET_DIR@
-ExecStart=@TARGET_DIR@/.venv/bin/python -m safetyvision.web.app --host 0.0.0.0 --port 8080 -c @CONFIG_PATH@
+ExecStart=@VENV_DIR@/bin/python -m safetyvision.web.app --host 0.0.0.0 --port 8080 -c @CONFIG_PATH@
 Restart=always
 RestartSec=3
 LimitNOFILE=4096
@@ -17,6 +17,7 @@ StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=safetyvision-ui
 Environment=SAFETYVISION_CONFIG=@CONFIG_PATH@
+Environment=PYTHONPATH=@TARGET_DIR@/src
 Environment=SAFETYVISION_UI_USER=admin
 Environment=SAFETYVISION_UI_PASS=safetyvision
 Environment=SAFETYVISION_WEB_RTSP_TRANSPORT=tcp
