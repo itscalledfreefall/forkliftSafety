@@ -17,12 +17,13 @@ MIN_FREE_GB="${SAFETYVISION_MIN_FREE_GB:-5}"            # or when free space bel
 # Parse RTSP URL from config
 # ---------------------------------------------------------------------------
 RTSP_URL=$(python3 -c "
-import yaml, sys
+import yaml
 with open('$CONFIG') as f:
     cfg = yaml.safe_load(f)
-url = cfg.get('input', {}).get('rtsp_url_main', '')
-if not url:
-    url = cfg.get('input', {}).get('rtsp_url', '')
+cams = (cfg.get('input') or {}).get('cameras') or []
+url = ''
+if cams:
+    url = cams[0].get('rtsp_url_main') or cams[0].get('rtsp_url') or ''
 print(url)
 ")
 

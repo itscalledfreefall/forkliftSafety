@@ -1,9 +1,10 @@
-"""Decision worker – alert state machine with horizontal band zones."""
+"""Decision worker – per-camera alert state machine."""
 
 from __future__ import annotations
 
 import threading
 import time
+from dataclasses import dataclass
 from queue import Empty, Queue
 from typing import Optional
 
@@ -13,12 +14,19 @@ from safetyvision.config import SafetyVisionConfig
 from safetyvision.types import AlertEvent, AlertState, DetectionEvent
 
 
-class DecisionWorker:
-    """Consumes DetectionEvents and produces AlertEvents based on state machine.
+@dataclass
+class _CameraState:
+    state: AlertState = AlertState.IDLE
+    last_trigger_ns: int = 0
+    last_person_ns: int = 0
+    alert_count: int = 0
 
-    Zone classification (green/yellow/red) is already resolved by inference
-    worker into ``event.zone_level``.  This worker only manages the alert
-    state machine: trigger, repeat-throttle, and clear.
+
+class DecisionWorker:
+    """Consumes DetectionEvents and produces AlertEvents.
+
+    Each camera maintains its own state machine so an active person on one
+    camera does not block another camera from clearing.
     """
 
     def __init__(
@@ -41,19 +49,14 @@ class DecisionWorker:
         self._alert_cb = alert_cb
         self._event_cb = event_cb
         self._thread: Optional[threading.Thread] = None
-
-        self._state = AlertState.IDLE
-        self._last_trigger_ns: int = 0
-        self._last_person_ns: int = 0
-        self._alert_count: int = 0
-
-    @property
-    def state(self) -> AlertState:
-        return self._state
+        self._states: dict[str, _CameraState] = {}
 
     @property
     def alert_count(self) -> int:
-        return self._alert_count
+        return sum(s.alert_count for s in self._states.values())
+
+    def state_for(self, camera_id: str) -> AlertState:
+        return self._states.get(camera_id, _CameraState()).state
 
     def start(self) -> None:
         self._thread = threading.Thread(
@@ -68,6 +71,8 @@ class DecisionWorker:
 
     def process_event(self, event: DetectionEvent) -> Optional[AlertEvent]:
         """Pure state-machine logic, testable without threads."""
+        cam_state = self._states.setdefault(event.camera_id or "default", _CameraState())
+
         now_ns = event.timestamp_ns
         repeat_ns = int(self._cfg.alert.repeat_interval_sec * 1e9)
         clear_ns = int(self._cfg.alert.min_clear_sec * 1e9)
@@ -76,44 +81,48 @@ class DecisionWorker:
         in_alert_zone = sound_key in ("danger", "medium")
 
         if in_alert_zone:
-            self._last_person_ns = now_ns
+            cam_state.last_person_ns = now_ns
 
-        if self._state == AlertState.IDLE:
+        if cam_state.state == AlertState.IDLE:
             if in_alert_zone:
-                self._state = AlertState.TRIGGERED
-                self._last_trigger_ns = now_ns
-                self._alert_count += 1
+                cam_state.state = AlertState.TRIGGERED
+                cam_state.last_trigger_ns = now_ns
+                cam_state.alert_count += 1
                 return AlertEvent(
                     timestamp_ns=now_ns,
                     trigger_reason="person_detected",
                     cooldown_active=False,
                     sound_key=sound_key,
+                    camera_id=event.camera_id,
                 )
 
-        elif self._state == AlertState.TRIGGERED:
+        elif cam_state.state == AlertState.TRIGGERED:
             if not in_alert_zone:
-                elapsed = now_ns - self._last_person_ns
+                elapsed = now_ns - cam_state.last_person_ns
                 if elapsed >= clear_ns:
-                    self._state = AlertState.IDLE
-                    logger.info("Alert cleared after {:.1f}s of no person", elapsed / 1e9)
+                    cam_state.state = AlertState.IDLE
+                    logger.info(
+                        "[{}] Alert cleared after {:.1f}s of no person",
+                        event.camera_id or "default",
+                        elapsed / 1e9,
+                    )
                     return None
             else:
-                # Person still in alert zone – check repeat interval
-                elapsed = now_ns - self._last_trigger_ns
+                elapsed = now_ns - cam_state.last_trigger_ns
                 if elapsed >= repeat_ns:
-                    self._last_trigger_ns = now_ns
-                    self._alert_count += 1
+                    cam_state.last_trigger_ns = now_ns
+                    cam_state.alert_count += 1
                     return AlertEvent(
                         timestamp_ns=now_ns,
                         trigger_reason="repeat_while_present",
                         cooldown_active=True,
                         sound_key=sound_key,
+                        camera_id=event.camera_id,
                     )
 
         return None
 
     def _classify_sound_key(self, event: DetectionEvent) -> str:
-        """Map zone_level to sound key with confidence gate."""
         if not event.person_detected:
             return ""
         if event.confidence_max < self._cfg.alert.min_alert_confidence:
@@ -122,7 +131,6 @@ class DecisionWorker:
             return "danger"
         if event.zone_level == "medium":
             return "medium"
-        # Green zone or no zone → silent
         return "medium" if self._cfg.alert.always_announce_person else ""
 
     def _run(self) -> None:

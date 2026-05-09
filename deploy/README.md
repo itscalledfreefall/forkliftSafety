@@ -7,7 +7,7 @@ Quick Install
 -------------
 
   cd ~/forkliftSafety
-  sudo bash scripts/setup_raspberry_pi.sh
+  sudo bash deploy/setup_pi.sh
 
 Configure
 ---------
