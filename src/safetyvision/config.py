@@ -67,9 +67,17 @@ class ModelConfig:
 class AlertConfig:
     siren_wav: str = "assets/audio/siren.wav"
     voice_wav: str = "assets/audio/warning_voice.wav"
+    # Zone classification mode: "bands" (horizontal Y-thresholds) or
+    # "distance" (homography-projected meters from forklift).
+    zone_mode: str = "bands"
     # Horizontal band zone cut lines (normalized Y, 0=top, 1=bottom).
     yellow_start_y: float = 0.33
     red_start_y: float = 0.66
+    # Distance-mode parameters. Only used when zone_mode == "distance".
+    calibration_path: str = "config/calibration_back.json"
+    danger_threshold_m: float = 1.0
+    warning_threshold_m: float = 5.0
+    distance_smoothing_frames: int = 3
     min_alert_confidence: float = 0.60
     always_announce_person: bool = False
     repeat_interval_sec: float = 0.75
@@ -236,5 +244,23 @@ def validate(cfg: SafetyVisionConfig) -> None:
         raise ConfigError("alert.repeat_interval_sec must be positive")
     if cfg.alert.min_clear_sec <= 0:
         raise ConfigError("alert.min_clear_sec must be positive")
+    # Distance-mode validation
+    if cfg.alert.zone_mode not in ("bands", "distance"):
+        raise ConfigError(
+            f"alert.zone_mode must be 'bands' or 'distance', got '{cfg.alert.zone_mode}'"
+        )
+    if cfg.alert.danger_threshold_m <= 0:
+        raise ConfigError("alert.danger_threshold_m must be positive")
+    if cfg.alert.warning_threshold_m <= cfg.alert.danger_threshold_m:
+        raise ConfigError(
+            "alert.warning_threshold_m must be greater than alert.danger_threshold_m"
+        )
+    if not 1 <= cfg.alert.distance_smoothing_frames <= 10:
+        raise ConfigError("alert.distance_smoothing_frames must be in [1, 10]")
+    if cfg.alert.zone_mode == "distance" and not Path(cfg.alert.calibration_path).exists():
+        raise ConfigError(
+            f"alert.zone_mode is 'distance' but calibration file not found: "
+            f"{cfg.alert.calibration_path}"
+        )
     if cfg.perf.max_queue_size < 1:
         raise ConfigError("perf.max_queue_size must be >= 1")

@@ -1,4 +1,4 @@
-"""Inference worker – delegates model I/O to a backend, handles zones + smoothing."""
+"""Inference worker - delegates model I/O to a backend, handles zones + smoothing."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from loguru import logger
 from safetyvision.config import CameraConfig, SafetyVisionConfig, get_effective_zone_thresholds
 from safetyvision.inference.backends import InferenceBackend, load_backend
 from safetyvision.types import Detection, DetectionEvent, FramePacket
+from safetyvision.zones.distance import DistanceZoneStrategy
 
 
 def _pin_to_cores(cores: list[int]) -> None:
@@ -29,13 +30,7 @@ def _classify_detection_zone(
     cfg: SafetyVisionConfig,
     camera: CameraConfig | None = None,
 ) -> str:
-    """Classify a detection into a horizontal band zone by footpoint Y.
-
-    Bands (top-to-bottom):
-        0.0  .. yellow_start_y  = green  (no sound)
-        yellow_start_y .. red_start_y = medium
-        red_start_y .. 1.0      = danger
-    """
+    """Classify a detection into a horizontal band zone by footpoint Y."""
     if frame_h <= 0:
         return ""
     foot_y = float(det.y2) / frame_h
@@ -72,6 +67,32 @@ class InferenceWorker:
         self._thread: Optional[threading.Thread] = None
         self._smoothing: dict[str, list[bool]] = {}
         self._camera_by_id = {camera.id: camera for camera in cfg.input.cameras}
+        self._distance_strategies: dict[str, DistanceZoneStrategy] = {}
+        for camera in cfg.input.cameras:
+            uses_global_distance = cfg.alert.zone_mode == "distance" and camera.id == "back"
+            if camera.mode != "distance" and not uses_global_distance:
+                continue
+            calibration_path = (
+                camera.distance.calibration_path
+                if camera.mode == "distance" and camera.distance.calibration_path
+                else cfg.alert.calibration_path
+            )
+            danger_m = (
+                camera.distance.danger_distance_m
+                if camera.mode == "distance"
+                else cfg.alert.danger_threshold_m
+            )
+            warning_m = (
+                camera.distance.warning_distance_m
+                if camera.mode == "distance"
+                else cfg.alert.warning_threshold_m
+            )
+            self._distance_strategies[camera.id] = DistanceZoneStrategy(
+                calibration_path=calibration_path,
+                danger_m=danger_m,
+                warning_m=warning_m,
+                smoothing_frames=cfg.alert.distance_smoothing_frames,
+            )
 
     def start(self) -> None:
         if self._backend is None:
@@ -101,6 +122,30 @@ class InferenceWorker:
             buf.pop(0)
         return sum(buf) >= (n + 1) // 2
 
+    def _classify_zone(
+        self,
+        camera_id: str,
+        camera_cfg: CameraConfig | None,
+        dets: list[Detection],
+        frame_h: int,
+        frame_w: int,
+    ) -> tuple[str, float | None]:
+        uses_global_distance = self._cfg.alert.zone_mode == "distance" and camera_id == "back"
+        if camera_cfg is not None and (camera_cfg.mode == "distance" or uses_global_distance):
+            strategy = self._distance_strategies.get(camera_id)
+            if strategy is not None:
+                result = strategy.classify(dets, frame_h, frame_w)
+                return result.zone_level, result.distance_m
+
+        zone_level = ""
+        for det in dets:
+            zone = _classify_detection_zone(det, frame_h, self._cfg, camera_cfg)
+            if zone == "danger":
+                return "danger", None
+            if zone == "medium":
+                zone_level = "medium"
+        return zone_level, None
+
     def _run(self) -> None:
         _pin_to_cores(self._cfg.perf.inference_cpu_cores)
 
@@ -118,21 +163,14 @@ class InferenceWorker:
                 continue
             t1 = time.time_ns()
 
-            frame_h = pkt.frame.shape[0]
+            frame_h, frame_w = pkt.frame.shape[:2]
             raw_detected = len(dets) > 0
             smoothed = self._apply_temporal_smoothing(pkt.camera_id, raw_detected)
             max_conf = max((d.confidence for d in dets), default=0.0)
-
-            # Multi-person: highest-risk band wins (danger > medium > green)
-            zone_level = ""
             camera_cfg = self._camera_by_id.get(pkt.camera_id)
-            for d in dets:
-                zone = _classify_detection_zone(d, frame_h, self._cfg, camera_cfg)
-                if zone == "danger":
-                    zone_level = "danger"
-                    break
-                if zone == "medium":
-                    zone_level = "medium"
+            zone_level, distance_m = self._classify_zone(
+                pkt.camera_id, camera_cfg, dets, frame_h, frame_w
+            )
 
             event = DetectionEvent(
                 timestamp_ns=pkt.timestamp_ns,
@@ -141,6 +179,7 @@ class InferenceWorker:
                 bbox_count=len(dets),
                 zone_level=zone_level,
                 camera_id=pkt.camera_id,
+                distance_m=distance_m,
             )
 
             # Drain and push latest event to keep decision queue fresh.

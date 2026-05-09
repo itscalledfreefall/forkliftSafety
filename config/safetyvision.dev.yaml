@@ -1,19 +1,18 @@
-# SafetyVision Raspberry Pi 5 + Hailo-8L profile
-# ───────────────────────────────────────────────
+# SafetyVision local development profile (Raspberry/Hailo schema)
 
 input:
   cameras:
     - id: back
-      rtsp_url: "rtsp://admin:password@192.168.1.108:554/cam/realmonitor?channel=1&subtype=1"
-      rtsp_url_main: "rtsp://admin:password@192.168.1.108:554/cam/realmonitor?channel=1&subtype=0"
+      rtsp_url: "rtsp://localhost:8554/back"
+      rtsp_url_main: "rtsp://localhost:8554/back"
       mode: zone
       zone:
-        yellow_start_y: 0.33
-        red_start_y: 0.72
+        yellow_start_y: 0.29
+        red_start_y: 0.78
       distance:
         warning_distance_m: 2.0
         danger_distance_m: 1.0
-        calibration_path: "config/calibration/back.yaml"
+        calibration_path: "config/calibration_back.json"
   width: 640
   height: 480
   target_fps: 15
@@ -28,33 +27,30 @@ model:
 alert:
   siren_wav: "assets/audio/danger.wav"
   voice_wav: "assets/audio/medium.wav"
-  # Zone classification: "bands" (Y-thresholds) or "distance" (homography meters).
-  # Toggle via the calibration UI; do not edit by hand once distance mode is in use.
   zone_mode: bands
-  yellow_start_y: 0.33
-  red_start_y: 0.72
-  # Distance-mode parameters (only used when zone_mode == "distance").
+  yellow_start_y: 0.29
+  red_start_y: 0.78
   calibration_path: "config/calibration_back.json"
   danger_threshold_m: 1.0
   warning_threshold_m: 5.0
   distance_smoothing_frames: 3
   min_alert_confidence: 0.55
   always_announce_person: false
-  repeat_interval_sec: 1.2
-  min_clear_sec: 2.5
+  repeat_interval_sec: 3.0
+  min_clear_sec: 3.0
 
 perf:
   max_queue_size: 1
   capture_cpu_cores: [0]
   inference_cpu_cores: [1, 2, 3]
-  temporal_smoothing_frames: 3
+  temporal_smoothing_frames: 5
   shm_snapshot_dir: "/dev/shm/safetyvision"
   shm_snapshot_interval_sec: 1.0
 
 logging:
   level: INFO
   json_output: true
-  log_dir: "./logs"
+  log_dir: ./logs
   max_size_mb: 50
 
 health:

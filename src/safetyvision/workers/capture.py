@@ -15,6 +15,13 @@ from loguru import logger
 from safetyvision.config import CameraConfig, SafetyVisionConfig
 from safetyvision.types import FramePacket
 
+# Calibration UI reads the latest decoded frame from this tmpfs path so
+# pixel coordinates clicked in the browser line up with what the detector
+# sees. Tmpfs (/dev/shm) avoids disk I/O.
+CALIBRATION_FRAME_DIR = "/dev/shm/safetyvision"
+CALIBRATION_FRAME_PATH = f"{CALIBRATION_FRAME_DIR}/frame_back.jpg"
+_CALIBRATION_FRAME_INTERVAL_NS = 1_000_000_000  # 1s
+
 
 def _pin_to_cores(cores: list[int]) -> None:
     try:
@@ -75,6 +82,7 @@ class CaptureWorker:
         self._seq = 0
         self._frames_dropped = 0
         self._connected = threading.Event()
+        self._last_snapshot_ns = 0
 
         self._snapshot_dir = Path(cfg.perf.shm_snapshot_dir)
         self._snapshot_path = self._snapshot_dir / f"frame_{camera.id}.jpg"
@@ -117,6 +125,28 @@ class CaptureWorker:
             self._cfg.input.height,
             self._cfg.input.target_fps,
         )
+
+    def _maybe_write_calibration_frame(self, frame: np.ndarray, now_ns: int) -> None:
+        """Throttled snapshot for the calibration UI.
+
+        Writes via a temp file + os.replace so the web app never reads a
+        half-encoded JPEG. Failures are logged once and swallowed — the
+        capture loop must keep running even if /dev/shm is unavailable.
+        """
+        if now_ns - self._last_snapshot_ns < _CALIBRATION_FRAME_INTERVAL_NS:
+            return
+        self._last_snapshot_ns = now_ns
+        try:
+            os.makedirs(CALIBRATION_FRAME_DIR, exist_ok=True)
+            ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+            if not ok:
+                return
+            tmp = CALIBRATION_FRAME_PATH + ".tmp"
+            with open(tmp, "wb") as f:
+                f.write(buf.tobytes())
+            os.replace(tmp, CALIBRATION_FRAME_PATH)
+        except OSError as e:
+            logger.warning("Calibration frame snapshot failed: {}", e)
 
     def _reconnect(self) -> None:
         self._connected.clear()
