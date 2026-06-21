@@ -93,6 +93,15 @@ async def test_login_failure():
 
 
 @pytest.mark.asyncio
+async def test_calibration_page_renders():
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        res = await ac.get("/calibration")
+        assert res.status_code == 200
+        assert "frameCanvas" in res.text
+
+
+@pytest.mark.asyncio
 async def test_auth_required():
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:

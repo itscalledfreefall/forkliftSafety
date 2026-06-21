@@ -1,12 +1,15 @@
 """Tests for zone classification and HailoBackend pre/postprocessing."""
 
+import threading
+from queue import Queue
+
 import numpy as np
 import pytest
 
 from safetyvision.config import CameraConfig, SafetyVisionConfig
 from safetyvision.inference.hailo_backend import HailoBackend
 from safetyvision.types import Detection
-from safetyvision.workers.inference import _classify_detection_zone
+from safetyvision.workers.inference import InferenceWorker, _classify_detection_zone
 
 
 class TestZoneBands:
@@ -84,6 +87,23 @@ class TestZoneBands:
 
         d = Detection(x1=0, y1=100, x2=100, y2=220, confidence=0.9, class_id=0)
         assert _classify_detection_zone(d, 480, cfg, cam) == "danger"
+
+
+class TestInferenceWorkerConstruction:
+    def test_accepts_zone_callbacks(self):
+        cfg = SafetyVisionConfig()
+        cfg.input.cameras = [CameraConfig(id="back", rtsp_url="rtsp://x/y")]
+        worker = InferenceWorker(
+            cfg,
+            Queue(),
+            Queue(),
+            threading.Event(),
+            zone_yellow_cb=lambda: None,
+            zone_red_cb=lambda: None,
+        )
+        assert worker._zone_yellow_cb is not None
+        assert worker._zone_red_cb is not None
+        assert worker._prev_zone_levels == {}
 
 
 class TestHailoPreprocess:
@@ -170,3 +190,24 @@ class TestHailoPostprocess:
     def test_unexpected_rank_returns_empty(self):
         output = np.zeros((80, 20, 5), dtype=np.float32)
         assert self._backend()._postprocess(output, 480, 640) == []
+
+    def test_list_output_uses_person_class_entry(self):
+        output = [np.zeros((20, 5), dtype=np.float32) for _ in range(80)]
+        output[0][0] = [0.1, 0.2, 0.5, 0.6, 0.9]
+        dets = self._backend()._postprocess(output, src_h=480, src_w=640)
+        assert len(dets) == 1
+        assert dets[0].confidence == pytest.approx(0.9)
+
+    def test_singleton_classwise_output_is_unwrapped(self):
+        output = [np.zeros((1, 20, 5), dtype=np.float32)]
+        output[0][0, 0] = [0.1, 0.2, 0.5, 0.6, 0.9]
+        dets = self._backend(person_class=0)._postprocess(output, src_h=480, src_w=640)
+        assert len(dets) == 1
+        assert dets[0].x1 == pytest.approx(0.2 * 640)
+
+    def test_singleton_outer_list_with_class_tensor_is_unwrapped(self):
+        output = [np.zeros((80, 20, 5), dtype=np.float32)]
+        output[0][0, 0] = [0.1, 0.2, 0.5, 0.6, 0.9]
+        dets = self._backend(person_class=0)._postprocess(output, src_h=480, src_w=640)
+        assert len(dets) == 1
+        assert dets[0].y2 == pytest.approx(0.5 * 480)
