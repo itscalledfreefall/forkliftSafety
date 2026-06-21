@@ -3,83 +3,246 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>OmniGuard Control Panel</title>
+  <title>SafetyVision Control Panel</title>
   <link rel="stylesheet" href="/static/css/style.css">
+  <script src="/static/vendor/lucide.min.js"></script>
 </head>
 <body>
+<div id="app">
+
+  <!-- Header -->
   <header>
-    <div class="brand">
-      <svg class="brand-icon" viewBox="0 0 100 100" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
-        <circle cx="50" cy="50" r="45" stroke="currentColor" stroke-width="3" fill="none"/>
-        <circle cx="50" cy="50" r="12" fill="currentColor"/>
-        <path d="M 50 20 C 58 20 62 26 58 32 C 54 38 46 38 50 30 C 52 26 50 20 50 20 Z" fill="currentColor"/>
-        <path d="M 24 65 C 20 58 22 51 28 49 C 34 47 38 54 32 58 C 28 60 24 65 24 65 Z" fill="currentColor"/>
-        <path d="M 76 65 C 80 58 78 51 72 49 C 66 47 62 54 68 58 C 72 60 76 65 76 65 Z" fill="currentColor"/>
-      </svg>
-      <h1>OmniGuard</h1>
+    <a class="logo" href="/">
+      <div class="logo-icon">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+          <path d="M8 2L13.5 5V11L8 14L2.5 11V5L8 2Z" stroke="white" stroke-width="1.5" stroke-linejoin="round"/>
+          <circle cx="8" cy="8" r="2" fill="white"/>
+        </svg>
+      </div>
+      <span class="logo-wordmark">Safety<span>Vision</span></span>
+    </a>
+
+    <div class="status-pill" id="serviceStatus">
+      <div class="dot"></div>
+      <span id="serviceStatusText">--</span>
     </div>
-    <div class="header-right">
-      <span id="serviceStatus" class="status-badge">--</span>
-      <button id="logoutBtn" class="btn-small">Logout</button>
+
+    <div class="header-spacer"></div>
+
+    <div class="header-actions">
+      <a href="/calibration" class="btn-ghost">
+        <i data-lucide="sliders-horizontal" style="width:14px;height:14px;"></i>
+        <span class="btn-label">Calibration</span>
+      </a>
+      <button id="logoutBtn" class="btn-outline">
+        <i data-lucide="log-out" style="width:14px;height:14px;"></i>
+        <span class="btn-label">Logout</span>
+      </button>
     </div>
   </header>
 
+  <!-- Tab strip -->
+  <nav class="tabs">
+    <button class="tab active" data-tab="dashboard">
+      <i data-lucide="layout-dashboard" style="width:14px;height:14px;"></i>
+      Dashboard
+    </button>
+    <button class="tab" data-tab="zones">
+      <i data-lucide="map-pin" style="width:14px;height:14px;"></i>
+      Zone Settings
+    </button>
+    <button class="tab" data-tab="timing">
+      <i data-lucide="volume-2" style="width:14px;height:14px;"></i>
+      Audio / Timing
+    </button>
+  </nav>
+
   <main>
-    <!-- Tabs -->
-    <nav class="tabs">
-      <button class="tab active" data-tab="dashboard">Dashboard</button>
-      <button class="tab" data-tab="cameras">Camera Settings</button>
-      <button class="tab" data-tab="zones">Zone Settings</button>
-      <button class="tab" data-tab="timing">Audio / Timing</button>
-    </nav>
 
-    <!-- Dashboard Tab -->
+    <!-- ── Dashboard tab ─────────────────────────────────────────── -->
     <section id="tab-dashboard" class="tab-content active">
+
+      <div class="section-label">
+        <i data-lucide="activity" style="width:12px;height:12px;"></i>
+        Performance Metrics
+      </div>
+
       <div class="metrics-grid">
-        <div class="metric-card">
-          <div class="metric-label">Pipeline FPS</div>
-          <div class="metric-value" id="metricFps">--</div>
+
+        <div class="metric-card accent-green">
+          <div class="card-header">
+            <div class="card-label">
+              <i data-lucide="zap" style="width:14px;height:14px;"></i>
+              Pipeline FPS
+            </div>
+            <span class="card-badge badge-green">Live</span>
+          </div>
+          <div class="card-value">
+            <span id="metricFps">--</span><span class="unit">fps</span>
+          </div>
+          <div class="card-footer">
+            <i data-lucide="trending-up" style="width:11px;height:11px;color:var(--green);"></i>
+            Target ≥ 12 fps
+          </div>
         </div>
-        <div class="metric-card">
-          <div class="metric-label">Total Latency</div>
-          <div class="metric-value" id="metricLatency">--</div>
-          <div class="metric-unit">ms</div>
+
+        <div class="metric-card accent-primary">
+          <div class="card-header">
+            <div class="card-label">
+              <i data-lucide="timer" style="width:14px;height:14px;"></i>
+              Total Latency
+            </div>
+            <span class="card-badge badge-blue">End-to-end</span>
+          </div>
+          <div class="card-value">
+            <span id="metricLatency">--</span><span class="unit">ms</span>
+          </div>
+          <div class="card-footer">
+            <i data-lucide="minus" style="width:11px;height:11px;"></i>
+            Limit 150 ms
+          </div>
         </div>
-        <div class="metric-card">
-          <div class="metric-label">Capture FPS</div>
-          <div class="metric-value" id="metricCaptureFps">--</div>
+
+        <div class="metric-card accent-green">
+          <div class="card-header">
+            <div class="card-label">
+              <i data-lucide="camera" style="width:14px;height:14px;"></i>
+              Capture FPS
+            </div>
+            <span class="card-badge badge-green">Camera</span>
+          </div>
+          <div class="card-value">
+            <span id="metricCaptureFps">--</span><span class="unit">fps</span>
+          </div>
+          <div class="card-footer">
+            <i data-lucide="video" style="width:11px;height:11px;color:var(--green);"></i>
+            Back camera
+          </div>
         </div>
-        <div class="metric-card">
-          <div class="metric-label">Inference FPS</div>
-          <div class="metric-value" id="metricInferenceFps">--</div>
+
+        <div class="metric-card accent-primary">
+          <div class="card-header">
+            <div class="card-label">
+              <i data-lucide="cpu" style="width:14px;height:14px;"></i>
+              Inference FPS
+            </div>
+            <span class="card-badge badge-blue">YOLO</span>
+          </div>
+          <div class="card-value">
+            <span id="metricInferenceFps">--</span><span class="unit">fps</span>
+          </div>
+          <div class="card-footer">
+            <i data-lucide="server" style="width:11px;height:11px;"></i>
+            ONNX Runtime
+          </div>
         </div>
-        <div class="metric-card metric-yellow">
-          <div class="metric-label">Yellow Zone Entries</div>
-          <div class="metric-value" id="metricYellowEntries">--</div>
+
+        <!-- Zone-counter cards stubbed pending the counters PR -->
+        <div class="metric-card accent-yellow border-yellow">
+          <div class="card-header">
+            <div class="card-label">
+              <i data-lucide="alert-triangle" style="width:14px;height:14px;color:var(--yellow);"></i>
+              Yellow Zone Entries
+            </div>
+            <span class="card-badge badge-dim">Pending</span>
+          </div>
+          <div class="card-value value-yellow">
+            <span>—</span><span class="unit">events</span>
+          </div>
+          <div class="card-footer">
+            <i data-lucide="info" style="width:11px;height:11px;"></i>
+            Awaiting counters service
+          </div>
         </div>
-        <div class="metric-card metric-red">
-          <div class="metric-label">Red Zone Entries</div>
-          <div class="metric-value" id="metricRedEntries">--</div>
+
+        <div class="metric-card accent-red border-red">
+          <div class="card-header">
+            <div class="card-label">
+              <i data-lucide="shield-alert" style="width:14px;height:14px;color:var(--red);"></i>
+              Red Zone Entries
+            </div>
+            <span class="card-badge badge-dim">Pending</span>
+          </div>
+          <div class="card-value value-red">
+            <span>—</span><span class="unit">events</span>
+          </div>
+          <div class="card-footer">
+            <i data-lucide="info" style="width:11px;height:11px;"></i>
+            Awaiting counters service
+          </div>
         </div>
+
       </div>
-      <div class="stream-container">
-        <img id="liveStream" src="" alt="Live Feed">
-        <div id="streamOffline" class="stream-offline">Stream offline</div>
+
+      <div class="section-label">
+        <i data-lucide="video" style="width:12px;height:12px;"></i>
+        Live Feed &amp; Proximity
+      </div>
+
+      <div class="bottom-row">
+
+        <!-- Closest Person sidebar (toggled by JS based on zone_mode) -->
+        <div class="closest-person-card accent-green" id="distanceCard" style="display:none">
+          <div class="cp-label">
+            <i data-lucide="person-standing" style="width:14px;height:14px;"></i>
+            Closest Person
+          </div>
+
+          <div class="cp-distance">
+            <span class="dist-value value-green" id="metricDistance">--</span>
+            <span class="dist-unit">m</span>
+          </div>
+
+          <div class="zone-tag green" id="metricZoneLevel">Safe Zone</div>
+
+          <div class="cp-sublist">
+            <div class="cp-sublabel">
+              <i data-lucide="ruler" style="width:12px;height:12px;"></i>
+              Distance mode active
+            </div>
+            <div class="cp-sublabel">
+              <i data-lucide="map-pin" style="width:12px;height:12px;color:var(--yellow);"></i>
+              Yellow threshold: <span id="cpYellowThreshold">--</span> m
+            </div>
+            <div class="cp-sublabel">
+              <i data-lucide="map-pin" style="width:12px;height:12px;color:var(--red);"></i>
+              Red threshold: <span id="cpRedThreshold">--</span> m
+            </div>
+          </div>
+        </div>
+
+        <!-- Live MJPEG stream -->
+        <div class="video-container">
+          <div class="video-header">
+            <div class="video-title">
+              <i data-lucide="camera" style="width:14px;height:14px;"></i>
+              Back Camera
+            </div>
+            <div class="live-badge" id="liveBadge">
+              <div class="live-dot"></div>
+              Live
+            </div>
+            <div class="video-meta">
+              <span><i data-lucide="monitor" style="width:11px;height:11px;"></i> <span id="videoResolution">--</span></span>
+              <span><i data-lucide="zap" style="width:11px;height:11px;"></i> <span id="videoFps">--</span> fps</span>
+              <span><i data-lucide="wifi" id="videoWifiIcon" class="online-icon" style="width:11px;height:11px;"></i> <span id="videoStatus">--</span></span>
+            </div>
+          </div>
+          <div class="video-bezel">
+            <img id="liveStream" src="" alt="Live Feed">
+            <div id="streamOffline" class="stream-offline" style="display:none">Stream offline</div>
+          </div>
+        </div>
+
       </div>
     </section>
 
-    <!-- Camera Settings Tab -->
-    <section id="tab-cameras" class="tab-content">
-      <h2>Camera Modes</h2>
-      <p class="help-text">Choose per-camera behavior. Zone mode uses the existing top-view thresholds. Distance mode is stored now so you can configure the rear camera in the dashboard, and the metric distance logic can be added on top next.</p>
-      <div id="cameraCards" class="camera-cards"></div>
-    </section>
-
-    <!-- Zone Settings Tab -->
+    <!-- ── Zone Settings tab ─────────────────────────────────────── -->
     <section id="tab-zones" class="tab-content">
-      <h2>Zone Cut Lines</h2>
-      <p class="help-text">Adjust the global default zone boundaries. Cameras in zone mode can override these values individually from the Camera Settings tab.</p>
-
+      <div>
+        <h2>Zone Cut Lines</h2>
+        <p class="help-text">Adjust the horizontal boundaries between green (safe), yellow (medium alert), and red (danger alert) zones. Used in band mode only.</p>
+      </div>
       <div class="zone-editor">
         <div class="zone-preview" id="zonePreview">
           <div class="zone-band green-band" id="greenBand"></div>
@@ -95,21 +258,27 @@
 
         <div class="zone-controls">
           <div class="slider-group">
-            <label>Yellow Start Y: <strong id="yellowVal">0.33</strong></label>
+            <label>Yellow Start Y <strong id="yellowVal">0.33</strong></label>
             <input type="range" id="yellowSlider" min="0.05" max="0.95" step="0.01" value="0.33">
           </div>
           <div class="slider-group">
-            <label>Red Start Y: <strong id="redVal">0.66</strong></label>
+            <label>Red Start Y <strong id="redVal">0.66</strong></label>
             <input type="range" id="redSlider" min="0.05" max="0.95" step="0.01" value="0.66">
           </div>
-          <button id="saveZonesBtn" class="btn-primary">Save Zones</button>
+          <button id="saveZonesBtn" class="btn-primary">
+            <i data-lucide="save" style="width:14px;height:14px;"></i>
+            Save Zones
+          </button>
         </div>
       </div>
     </section>
 
-    <!-- Timing Tab -->
+    <!-- ── Audio / Timing tab ────────────────────────────────────── -->
     <section id="tab-timing" class="tab-content">
-      <h2>Alert Timing</h2>
+      <div>
+        <h2>Alert Timing</h2>
+        <p class="help-text">Tune how often the audio alarm repeats while a person is detected, how long the area must be clear before alerts reset, and the minimum detection confidence to trigger an alarm.</p>
+      </div>
       <div class="form-grid">
         <div class="form-group">
           <label>Repeat Interval (sec)</label>
@@ -124,33 +293,48 @@
           <input type="number" id="minConfidence" step="0.01" min="0.01" max="0.99" value="0.55">
         </div>
       </div>
-      <button id="saveTimingBtn" class="btn-primary">Save Timing</button>
+      <div>
+        <button id="saveTimingBtn" class="btn-primary">
+          <i data-lucide="save" style="width:14px;height:14px;"></i>
+          Save Timing
+        </button>
+      </div>
     </section>
 
-    <!-- Apply Bar -->
+    <!-- Apply bar -->
     <div class="apply-bar">
-      <button id="validateBtn" class="btn-secondary">Validate Config</button>
-      <button id="applyBtn" class="btn-danger">Apply &amp; Restart</button>
-      <button id="restoreBtn" class="btn-secondary">Restore Previous</button>
+      <button id="validateBtn" class="btn-secondary">
+        <i data-lucide="check" style="width:14px;height:14px;"></i>
+        Validate Config
+      </button>
+      <button id="applyBtn" class="btn-danger">
+        <i data-lucide="play" style="width:14px;height:14px;"></i>
+        Apply &amp; Restart
+      </button>
+      <button id="restoreBtn" class="btn-secondary">
+        <i data-lucide="rotate-ccw" style="width:14px;height:14px;"></i>
+        Restore Previous
+      </button>
       <span id="applyStatus" class="apply-status"></span>
     </div>
   </main>
+</div>
 
-  <!-- Confirm Modal -->
-  <div id="confirmModal" class="modal" style="display:none">
-    <div class="modal-content">
-      <h3>Confirm Apply</h3>
-      <p>This will save the current config and restart the OmniGuard service. Continue?</p>
-      <div class="modal-actions">
-        <button id="confirmApply" class="btn-danger">Apply &amp; Restart</button>
-        <button id="cancelApply" class="btn-secondary">Cancel</button>
-      </div>
+<!-- Confirm Modal -->
+<div id="confirmModal" class="modal" style="display:none">
+  <div class="modal-content">
+    <h3>Confirm Apply</h3>
+    <p>This will save the current config and restart the SafetyVision service. Continue?</p>
+    <div class="modal-actions">
+      <button id="cancelApply" class="btn-secondary">Cancel</button>
+      <button id="confirmApply" class="btn-danger">Apply &amp; Restart</button>
     </div>
   </div>
+</div>
 
-  <!-- Toast -->
-  <div id="toast" class="toast"></div>
+<!-- Toast -->
+<div id="toast" class="toast"></div>
 
-  <script src="/static/js/app.js"></script>
+<script src="/static/js/app.js"></script>
 </body>
 </html>

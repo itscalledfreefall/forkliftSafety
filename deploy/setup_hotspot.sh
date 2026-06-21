@@ -14,11 +14,16 @@ fi
 AP_IFACE="${1:-wlan0}"
 AP_SSID="${2:-SafetyVision}"
 AP_PASS="${3:-safetyvision123}"
+OFFLINE="${OFFLINE:-0}"
 AP_IP="192.168.10.1"
 AP_SUBNET="192.168.10.0/24"
 DHCP_RANGE_START="192.168.10.10"
 DHCP_RANGE_END="192.168.10.50"
 DHCP_LEASE="12h"
+
+have_pkg() {
+    dpkg -s "$1" >/dev/null 2>&1
+}
 
 echo "=== SafetyVision Pi 5 Hotspot Setup ==="
 echo "Interface: $AP_IFACE"
@@ -28,9 +33,19 @@ echo
 
 # 1. Install packages (iptables is NOT preinstalled on Bookworm)
 echo "[1/7] Installing packages..."
-export DEBIAN_FRONTEND=noninteractive
-apt-get update -qq
-apt-get install -y -qq hostapd dnsmasq iptables iptables-persistent
+if [[ "${OFFLINE}" == "1" ]]; then
+    echo "  -> offline mode; skipping apt package install"
+    for pkg in hostapd dnsmasq iptables iptables-persistent; do
+        if ! have_pkg "${pkg}"; then
+            echo "  !! offline mode requires preinstalled package: ${pkg}" >&2
+            exit 1
+        fi
+    done
+else
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -qq
+    apt-get install -y -qq hostapd dnsmasq iptables iptables-persistent
+fi
 
 # 2. Stop services during config
 echo "[2/7] Stopping services for reconfiguration..."

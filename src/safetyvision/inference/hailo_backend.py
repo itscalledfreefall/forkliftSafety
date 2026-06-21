@@ -125,7 +125,7 @@ class HailoBackend:
 
     def _postprocess(
         self,
-        output: np.ndarray,
+        output: np.ndarray | list | tuple,
         src_h: int,
         src_w: int,
     ) -> list[Detection]:
@@ -135,11 +135,10 @@ class HailoBackend:
         dim is [y_min, x_min, y_max, x_max, score] in [0, 1] normalized coords,
         sorted by score descending with zero-filled trailing rows.
         """
-        if output.ndim != 4:
-            logger.warning("Unexpected Hailo output rank: {}", output.ndim)
+        person_boxes = self._extract_person_boxes(output)
+        if person_boxes is None:
             return []
 
-        person_boxes = output[0, self._person_class_id]  # (max_boxes, 5)
         detections: list[Detection] = []
         for row in person_boxes:
             score = float(row[4])
@@ -162,3 +161,43 @@ class HailoBackend:
                 )
             )
         return detections
+
+    def _extract_person_boxes(self, output: np.ndarray | list | tuple) -> np.ndarray | None:
+        """Normalize Hailo outputs across runtime variants to a ``(N, 5)`` array."""
+        if isinstance(output, (list, tuple)):
+            if not output:
+                return None
+            if len(output) == 1:
+                return self._extract_person_boxes(output[0])
+            if self._person_class_id >= len(output):
+                logger.warning(
+                    "Hailo classwise output has {} entries; person_class_id={} is out of range",
+                    len(output),
+                    self._person_class_id,
+                )
+                return None
+            person_boxes = np.asarray(output[self._person_class_id])
+            if person_boxes.ndim == 3 and person_boxes.shape[0] == 1:
+                person_boxes = person_boxes[0]
+            if person_boxes.ndim != 2 or person_boxes.shape[-1] != 5:
+                logger.warning(
+                    "Unexpected Hailo classwise output shape for class {}: {}",
+                    self._person_class_id,
+                    person_boxes.shape,
+                )
+                return None
+            return person_boxes
+
+        output = np.asarray(output)
+        if output.ndim == 4:
+            return output[0, self._person_class_id]
+        if output.ndim == 3 and output.shape[-1] == 5:
+            if output.shape[0] > self._person_class_id:
+                return output[self._person_class_id]
+            if output.shape[0] == 1:
+                return output[0]
+        if output.ndim == 2 and output.shape[-1] == 5:
+            return output
+
+        logger.warning("Unexpected Hailo output shape: {}", output.shape)
+        return None

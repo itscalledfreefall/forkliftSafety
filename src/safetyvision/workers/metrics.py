@@ -85,6 +85,14 @@ class MetricsCollector:
         with self._lock:
             self._alert_count += 1
 
+    def record_yellow_entry(self) -> None:
+        with self._lock:
+            self._yellow_zone_entries += 1
+
+    def record_red_entry(self) -> None:
+        with self._lock:
+            self._red_zone_entries += 1
+
     def record_detection_event(self, event: DetectionEvent) -> None:
         """Store the latest distance / zone for dashboard display."""
         with self._lock:

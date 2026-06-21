@@ -51,6 +51,15 @@ class TestMetricsCollector:
         m.record_alert()
         assert m.snapshot().alert_count == 1
 
+    def test_zone_entry_counting(self):
+        m = MetricsCollector()
+        m.record_yellow_entry()
+        m.record_red_entry()
+        m.record_red_entry()
+        snap = m.snapshot()
+        assert snap.yellow_zone_entries == 1
+        assert snap.red_zone_entries == 2
+
     def test_uptime_increases(self):
         m = MetricsCollector()
         time.sleep(0.05)

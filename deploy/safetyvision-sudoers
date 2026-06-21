@@ -1,4 +1,8 @@
 # Allow the rendered service user to restart/status the safety service without password
 @RUN_USER@ ALL=(root) NOPASSWD: /usr/bin/systemctl restart safetyvision
+@RUN_USER@ ALL=(root) NOPASSWD: /usr/bin/systemctl restart safetyvision-ui
+@RUN_USER@ ALL=(root) NOPASSWD: /usr/bin/systemctl restart safetyvision safetyvision-ui
 @RUN_USER@ ALL=(root) NOPASSWD: /usr/bin/systemctl status safetyvision
+@RUN_USER@ ALL=(root) NOPASSWD: /usr/bin/systemctl status safetyvision-ui
 @RUN_USER@ ALL=(root) NOPASSWD: /usr/bin/systemctl is-active safetyvision
+@RUN_USER@ ALL=(root) NOPASSWD: /usr/bin/systemctl is-active safetyvision-ui
