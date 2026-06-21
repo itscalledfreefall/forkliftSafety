@@ -37,10 +37,23 @@
       const res = await fetch('/api/status');
       const data = await res.json();
       const badge = document.getElementById('serviceStatus');
-      badge.textContent = data.service;
-      badge.className = 'status-badge ' +
+      const txt = document.getElementById('serviceStatusText');
+      if (txt) txt.textContent = data.service;
+      badge.className = 'status-pill ' +
         (data.service === 'active' ? 'active' :
          data.service === 'inactive' ? 'inactive' : 'unknown');
+
+      // Mirror service status into the live-feed badge
+      const isOnline = data.service === 'active';
+      const liveBadge = document.getElementById('liveBadge');
+      const vstatus = document.getElementById('videoStatus');
+      const vicon = document.getElementById('videoWifiIcon');
+      if (liveBadge) liveBadge.classList.toggle('offline', !isOnline);
+      if (vstatus) vstatus.textContent = isOnline ? 'Online' : 'Offline';
+      if (vicon) {
+        vicon.classList.toggle('online-icon', isOnline);
+        vicon.classList.toggle('offline-icon', !isOnline);
+      }
     } catch {}
   }
   pollStatus();
@@ -57,26 +70,63 @@
     el.textContent = value.toFixed(digits);
   }
 
+  const ZONE_LABEL = { green: 'Safe Zone', medium: 'Medium Zone', danger: 'Danger Zone' };
+  const ZONE_TO_VALUE_COLOR = { green: 'value-green', medium: 'value-yellow', danger: 'value-red' };
+  const ZONE_TO_ACCENT = { green: 'accent-green', medium: 'accent-yellow', danger: 'accent-red' };
+
+  function updateDistanceCard(data) {
+    const card = document.getElementById('distanceCard');
+    const distEl = document.getElementById('metricDistance');
+    const zoneEl = document.getElementById('metricZoneLevel');
+    if (!card) return;
+    const isDistance = data && data.zone_mode === 'distance';
+    card.style.display = isDistance ? '' : 'none';
+    if (!isDistance) return;
+
+    const next = (typeof data.last_distance_m === 'number')
+      ? data.last_distance_m.toFixed(2) : '--';
+    // Pulse only on real value changes (skip transitions to/from "--").
+    if (distEl.textContent !== next && next !== '--' && distEl.textContent !== '--') {
+      distEl.classList.remove('pulse');
+      void distEl.offsetWidth;  // force reflow to restart the keyframe
+      distEl.classList.add('pulse');
+    }
+    distEl.textContent = next;
+
+    const rawZone = data.last_zone_level || '';
+    const zone = rawZone === '' ? 'green' : rawZone;
+    zoneEl.textContent = ZONE_LABEL[zone] || 'Safe Zone';
+    zoneEl.className = 'zone-tag ' + zone;
+
+    // Tint the distance value + the card accent bar to match the zone
+    distEl.classList.remove('value-green', 'value-yellow', 'value-red');
+    distEl.classList.add(ZONE_TO_VALUE_COLOR[zone]);
+    card.classList.remove('accent-green', 'accent-yellow', 'accent-red');
+    card.classList.add(ZONE_TO_ACCENT[zone]);
+  }
+
   async function pollMetrics() {
     try {
       const res = await fetch('/api/metrics');
       if (res.status === 401) return;
       const data = await res.json();
+      updateDistanceCard(data);
       if (!data.available) {
         setMetricValue('metricFps', NaN, 1);
         setMetricValue('metricLatency', NaN, 1);
         setMetricValue('metricCaptureFps', NaN, 1);
         setMetricValue('metricInferenceFps', NaN, 1);
-        setMetricValue('metricYellowEntries', NaN, 0);
-        setMetricValue('metricRedEntries', NaN, 0);
         return;
       }
       setMetricValue('metricFps', data.fps, 1);
       setMetricValue('metricLatency', data.latency_total_ms, 1);
       setMetricValue('metricCaptureFps', data.capture_fps, 1);
       setMetricValue('metricInferenceFps', data.inference_fps, 1);
-      setMetricValue('metricYellowEntries', data.yellow_zone_entries, 0);
-      setMetricValue('metricRedEntries', data.red_zone_entries, 0);
+
+      // Live-feed FPS readout (rounded to whole number, like the mockup)
+      const vfps = document.getElementById('videoFps');
+      if (vfps && typeof data.capture_fps === 'number')
+        vfps.textContent = data.capture_fps.toFixed(0);
     } catch {
       // Keep existing values on transient errors.
     }
@@ -94,153 +144,6 @@
   }
   startStream();
 
-  function escapeHtml(value) {
-    return String(value || '').replace(/[&<>"']/g, char => ({
-      '&': '&amp;',
-      '<': '&lt;',
-      '>': '&gt;',
-      '"': '&quot;',
-      "'": '&#39;',
-    }[char]));
-  }
-
-  function cameraCardMarkup(camera) {
-    const effectiveZone = camera.effective_zone || {};
-    const zone = camera.zone || {};
-    const distance = camera.distance || {};
-    const yellow = Number(zone.yellow_start_y ?? effectiveZone.yellow_start_y ?? 0.33);
-    const red = Number(zone.red_start_y ?? effectiveZone.red_start_y ?? 0.66);
-    const warningDistance = Number(distance.warning_distance_m ?? 2.0);
-    const dangerDistance = Number(distance.danger_distance_m ?? 1.0);
-    const calibrationPath = distance.calibration_path || '';
-    const mode = camera.mode || 'zone';
-
-    return `
-      <article class="camera-card" data-camera-id="${escapeHtml(camera.id)}">
-        <div class="camera-card-header">
-          <div>
-            <h3>${escapeHtml(camera.id)}</h3>
-            <p class="camera-card-subtitle">${escapeHtml(camera.rtsp_url_main || camera.rtsp_url || '')}</p>
-          </div>
-          <span class="camera-mode-badge">${escapeHtml(mode)}</span>
-        </div>
-        <div class="form-grid camera-grid">
-          <div class="form-group">
-            <label>Mode</label>
-            <select class="camera-mode-select">
-              <option value="zone" ${mode === 'zone' ? 'selected' : ''}>Zone</option>
-              <option value="distance" ${mode === 'distance' ? 'selected' : ''}>Distance</option>
-            </select>
-          </div>
-        </div>
-
-        <div class="camera-mode-section camera-zone-fields">
-          <div class="form-grid camera-grid">
-            <div class="form-group">
-              <label>Yellow Start Y</label>
-              <input type="number" class="camera-zone-yellow" step="0.01" min="0.01" max="0.99" value="${yellow.toFixed(2)}">
-            </div>
-            <div class="form-group">
-              <label>Red Start Y</label>
-              <input type="number" class="camera-zone-red" step="0.01" min="0.01" max="0.99" value="${red.toFixed(2)}">
-            </div>
-          </div>
-        </div>
-
-        <div class="camera-mode-section camera-distance-fields">
-          <div class="form-grid camera-grid">
-            <div class="form-group">
-              <label>Warning Distance (m)</label>
-              <input type="number" class="camera-warning-distance" step="0.1" min="0.1" value="${warningDistance.toFixed(1)}">
-            </div>
-            <div class="form-group">
-              <label>Danger Distance (m)</label>
-              <input type="number" class="camera-danger-distance" step="0.1" min="0.1" value="${dangerDistance.toFixed(1)}">
-            </div>
-            <div class="form-group camera-wide-field">
-              <label>Calibration Path</label>
-              <input type="text" class="camera-calibration-path" value="${escapeHtml(calibrationPath)}" placeholder="config/calibration/back.yaml">
-            </div>
-          </div>
-          <p class="camera-mode-note">Distance mode is stored in config now. The rear-camera metric distance calculation is the next implementation step.</p>
-        </div>
-
-        <div class="camera-card-actions">
-          <button class="btn-primary save-camera-btn">Save Camera</button>
-        </div>
-      </article>
-    `;
-  }
-
-  function bindCameraCard(card) {
-    const modeSelect = card.querySelector('.camera-mode-select');
-    const badge = card.querySelector('.camera-mode-badge');
-    const zoneFields = card.querySelector('.camera-zone-fields');
-    const distanceFields = card.querySelector('.camera-distance-fields');
-    const saveButton = card.querySelector('.save-camera-btn');
-
-    function refreshMode() {
-      const mode = modeSelect.value;
-      badge.textContent = mode;
-      zoneFields.style.display = mode === 'zone' ? 'block' : 'none';
-      distanceFields.style.display = mode === 'distance' ? 'block' : 'none';
-    }
-
-    modeSelect.addEventListener('change', refreshMode);
-    refreshMode();
-
-    saveButton.addEventListener('click', async () => {
-      const cameraId = card.dataset.cameraId;
-      const payload = {
-        mode: modeSelect.value,
-        zone: {
-          yellow_start_y: parseFloat(card.querySelector('.camera-zone-yellow').value),
-          red_start_y: parseFloat(card.querySelector('.camera-zone-red').value),
-        },
-        distance: {
-          warning_distance_m: parseFloat(card.querySelector('.camera-warning-distance').value),
-          danger_distance_m: parseFloat(card.querySelector('.camera-danger-distance').value),
-          calibration_path: card.querySelector('.camera-calibration-path').value.trim(),
-        },
-      };
-
-      try {
-        const res = await fetch('/api/config/cameras/' + encodeURIComponent(cameraId), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        });
-        const data = await res.json();
-        if (!res.ok) {
-          toast(data.detail || 'Camera save failed', 'error');
-          return;
-        }
-        toast(cameraId + ' saved');
-        await loadCameraConfigs();
-      } catch {
-        toast('Connection error', 'error');
-      }
-    });
-  }
-
-  async function loadCameraConfigs() {
-    const container = document.getElementById('cameraCards');
-    if (!container) return;
-    try {
-      const res = await fetch('/api/config/cameras');
-      if (res.status === 401) { window.location.href = '/login'; return; }
-      const cameras = await res.json();
-      if (!Array.isArray(cameras) || cameras.length === 0) {
-        container.innerHTML = '<p class="help-text">No cameras configured.</p>';
-        return;
-      }
-      container.innerHTML = cameras.map(cameraCardMarkup).join('');
-      container.querySelectorAll('.camera-card').forEach(bindCameraCard);
-    } catch {
-      container.innerHTML = '<p class="help-text">Unable to load camera settings.</p>';
-    }
-  }
-
   // ── Load Config ─────────────────────────────────────────────
   async function loadConfig() {
     try {
@@ -248,6 +151,7 @@
       if (res.status === 401) { window.location.href = '/login'; return; }
       const cfg = await res.json();
       const alert = cfg.alert || {};
+      const input = cfg.input || {};
 
       // Zone sliders
       const yy = alert.yellow_start_y || 0.33;
@@ -262,7 +166,20 @@
       document.getElementById('repeatInterval').value = alert.repeat_interval_sec || 1.5;
       document.getElementById('minClear').value = alert.min_clear_sec || 3.0;
       document.getElementById('minConfidence').value = alert.min_alert_confidence || 0.55;
-      await loadCameraConfigs();
+
+      // Live-feed video meta
+      const w = input.width || 640;
+      const h = input.height || 480;
+      const resEl = document.getElementById('videoResolution');
+      if (resEl) resEl.textContent = w + '×' + h;
+
+      // Closest-person threshold readouts
+      const danger = alert.danger_threshold_m || 1.0;
+      const warning = alert.warning_threshold_m || 5.0;
+      const yel = document.getElementById('cpYellowThreshold');
+      const red = document.getElementById('cpRedThreshold');
+      if (yel) yel.textContent = warning.toFixed(1);
+      if (red) red.textContent = danger.toFixed(1);
     } catch {}
   }
   loadConfig();
@@ -304,10 +221,7 @@
         body: JSON.stringify({ yellow_start_y: yy, red_start_y: ry }),
       });
       const data = await res.json();
-      if (res.ok) {
-        toast('Zones saved');
-        await loadCameraConfigs();
-      }
+      if (res.ok) toast('Zones saved');
       else toast(data.detail || 'Save failed', 'error');
     } catch { toast('Connection error', 'error'); }
   });
@@ -393,5 +307,10 @@
     await fetch('/api/auth/logout', { method: 'POST' });
     window.location.href = '/login';
   });
+
+  // Render lucide icons declared via data-lucide attributes
+  if (window.lucide && typeof window.lucide.createIcons === 'function') {
+    window.lucide.createIcons();
+  }
 
 })();
