@@ -453,7 +453,7 @@ async def apply_config(_token: str = Depends(_check_session)):
     # Restart service
     try:
         result = subprocess.run(
-            ["sudo", "systemctl", "restart", "safetyvision"],
+            ["sudo", "systemctl", "restart", "safetyvision", "safetyvision-ui"],
             capture_output=True, text=True, timeout=15,
         )
         if result.returncode != 0:
@@ -563,6 +563,7 @@ def _stream_capture_loop():
     global _stream_frame
     cap = None
     yellow_y, red_y = 0.33, 0.66
+    camera_mode = "zone"
     config_refresh_ns = 0
 
     target_interval = 1.0 / max(WEB_PREVIEW_FPS, 1.0)
@@ -607,9 +608,13 @@ def _stream_capture_loop():
             alert = raw.get("alert", {})
             yellow_y = alert.get("yellow_start_y", 0.33)
             red_y = alert.get("red_start_y", 0.66)
+            cameras = raw.get("input", {}).get("cameras", [])
+            if cameras:
+                camera_mode = cameras[0].get("mode", "zone")
             config_refresh_ns = now
 
-        frame = _draw_zone_overlay(frame, yellow_y, red_y)
+        if camera_mode != "distance":
+            frame = _draw_zone_overlay(frame, yellow_y, red_y)
 
         # Keep web preview resolution bounded to reduce encode CPU and jitter.
         if WEB_PREVIEW_WIDTH > 0 and frame.shape[1] > WEB_PREVIEW_WIDTH:
@@ -674,7 +679,7 @@ async def login_page(request: Request):
 
 @app.get("/calibration", response_class=HTMLResponse)
 async def calibration_page(request: Request):
-    return templates.TemplateResponse("calibration.html", {"request": request})
+    return templates.TemplateResponse(request, "calibration.html")
 
 
 # Mount the calibration API router. ``CONFIG_PATH`` is read lazily so the

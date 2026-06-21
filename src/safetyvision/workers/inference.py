@@ -55,6 +55,8 @@ class InferenceWorker:
         stop_event: threading.Event,
         latency_cb=None,
         frame_cb=None,
+        zone_yellow_cb=None,
+        zone_red_cb=None,
         backend: Optional[InferenceBackend] = None,
     ):
         self._cfg = cfg
@@ -63,9 +65,12 @@ class InferenceWorker:
         self._stop = stop_event
         self._latency_cb = latency_cb
         self._frame_cb = frame_cb
+        self._zone_yellow_cb = zone_yellow_cb
+        self._zone_red_cb = zone_red_cb
         self._backend = backend
         self._thread: Optional[threading.Thread] = None
         self._smoothing: dict[str, list[bool]] = {}
+        self._prev_zone_levels: dict[str, str] = {}
         self._camera_by_id = {camera.id: camera for camera in cfg.input.cameras}
         self._distance_strategies: dict[str, DistanceZoneStrategy] = {}
         for camera in cfg.input.cameras:
@@ -171,14 +176,15 @@ class InferenceWorker:
             zone_level, distance_m = self._classify_zone(
                 pkt.camera_id, camera_cfg, dets, frame_h, frame_w
             )
+            prev_zone_level = self._prev_zone_levels.get(pkt.camera_id, "")
 
-            if zone_level == "medium" and self._prev_zone_level == "":
+            if zone_level == "medium" and prev_zone_level == "":
                 if self._zone_yellow_cb:
                     self._zone_yellow_cb()
-            elif zone_level == "danger" and self._prev_zone_level in ("", "medium"):
+            elif zone_level == "danger" and prev_zone_level in ("", "medium"):
                 if self._zone_red_cb:
                     self._zone_red_cb()
-            self._prev_zone_level = zone_level
+            self._prev_zone_levels[pkt.camera_id] = zone_level
 
             event = DetectionEvent(
                 timestamp_ns=pkt.timestamp_ns,

@@ -4,8 +4,8 @@
 input:
   cameras:
     - id: back
-      rtsp_url: "rtsp://admin:password@192.168.1.108:554/cam/realmonitor?channel=1&subtype=1"
-      rtsp_url_main: "rtsp://admin:password@192.168.1.108:554/cam/realmonitor?channel=1&subtype=0"
+      rtsp_url: "rtsp://admin:matrix18@192.168.1.64:554/Streaming/Channels/102"
+      rtsp_url_main: "rtsp://admin:matrix18@192.168.1.64:554/Streaming/Channels/101"
       mode: zone
       zone:
         yellow_start_y: 0.33
