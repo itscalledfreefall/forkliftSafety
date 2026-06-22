@@ -159,6 +159,10 @@ class CameraSettingsUpdate(BaseModel):
 @app.get("/api/config")
 async def get_config(_token: str = Depends(_check_session)):
     raw = _load_raw_config()
+    # Never expose the stored thermal camera password (mirrors /api/thermal/config).
+    thermal = raw.get("thermal")
+    if isinstance(thermal, dict) and thermal.get("password"):
+        raw = {**raw, "thermal": {**thermal, "password": ""}}
     return raw
 
 

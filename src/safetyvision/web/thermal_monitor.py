@@ -80,13 +80,26 @@ class FlirClient:
         raise RuntimeError("scene_max_c: unreachable")
 
     def test(self) -> tuple[bool, str]:
-        """Verify login + a scene-max read for the config tab."""
+        """Verify login + a scene-max read for the config tab.
+
+        Returns a coarse, sanitized message; the detailed exception is logged
+        only (so the endpoint can't be used as an SSRF/probe oracle).
+        """
         try:
             self._logged_in = False
             temp = self.scene_max_c()
             return True, f"Connected. Scene max {temp:.1f} C."
-        except Exception as exc:  # noqa: BLE001 - surfaced to the UI
-            return False, str(exc)
+        except urllib.error.HTTPError as exc:
+            logger.warning("thermal test HTTP error: %s", exc)
+            if exc.code in (401, 403):
+                return False, "authentication failed"
+            return False, "unexpected response from camera"
+        except (urllib.error.URLError, OSError, TimeoutError) as exc:
+            logger.warning("thermal test connection error: %s", exc)
+            return False, "camera unreachable"
+        except Exception as exc:  # noqa: BLE001 - surfaced coarsely to the UI
+            logger.warning("thermal test error: %s", exc)
+            return False, "test failed"
 
 
 def _tag_frame(frame: np.ndarray, temp_c: float, when: datetime) -> np.ndarray:
