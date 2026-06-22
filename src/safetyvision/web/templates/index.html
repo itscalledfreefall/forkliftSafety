@@ -55,6 +55,14 @@
       <i data-lucide="volume-2" style="width:14px;height:14px;"></i>
       Audio / Timing
     </button>
+    <button class="tab" data-tab="thermal">
+      <i data-lucide="flame" style="width:14px;height:14px;"></i>
+      Thermal View
+    </button>
+    <button class="tab" data-tab="thermal-config">
+      <i data-lucide="thermometer" style="width:14px;height:14px;"></i>
+      Thermal Config
+    </button>
   </nav>
 
   <main>
@@ -298,6 +306,141 @@
           <i data-lucide="save" style="width:14px;height:14px;"></i>
           Save Timing
         </button>
+      </div>
+    </section>
+
+    <!-- ── Thermal View tab ──────────────────────────────────────── -->
+    <section id="tab-thermal" class="tab-content">
+
+      <div class="section-label">
+        <i data-lucide="thermometer" style="width:12px;height:12px;"></i>
+        Thermal Status
+      </div>
+
+      <div class="metrics-grid">
+        <div class="metric-card accent-primary" id="thermalSceneCard">
+          <div class="card-header">
+            <div class="card-label">
+              <i data-lucide="thermometer" style="width:14px;height:14px;"></i>
+              Scene Max Temp
+            </div>
+            <span class="card-badge badge-blue" id="thermalStateBadge">--</span>
+          </div>
+          <div class="card-value">
+            <span id="thermalSceneTemp">--</span><span class="unit">&deg;C</span>
+          </div>
+          <div class="card-footer">
+            <i data-lucide="flame" style="width:11px;height:11px;"></i>
+            Threshold <span id="thermalThreshold">--</span> &deg;C
+          </div>
+        </div>
+
+        <div class="metric-card accent-red">
+          <div class="card-header">
+            <div class="card-label">
+              <i data-lucide="shield-alert" style="width:14px;height:14px;color:var(--red);"></i>
+              Violations
+            </div>
+            <span class="card-badge badge-dim">Since restart</span>
+          </div>
+          <div class="card-value value-red">
+            <span id="thermalViolationCount">0</span><span class="unit">events</span>
+          </div>
+          <div class="card-footer">
+            <i data-lucide="camera" style="width:11px;height:11px;"></i>
+            Snapshots below
+          </div>
+        </div>
+      </div>
+
+      <div class="section-label">
+        <i data-lucide="flame" style="width:12px;height:12px;"></i>
+        Thermal Feed
+      </div>
+
+      <div class="video-container">
+        <div class="video-header">
+          <div class="video-title">
+            <i data-lucide="flame" style="width:14px;height:14px;"></i>
+            FLIR Thermal
+          </div>
+          <div class="live-badge" id="thermalLiveBadge">
+            <div class="live-dot"></div>
+            Live
+          </div>
+        </div>
+        <div class="video-bezel">
+          <img id="thermalStream" src="" alt="Thermal Feed">
+          <div id="thermalOffline" class="stream-offline" style="display:none">Thermal stream offline — enable it in Thermal Config</div>
+        </div>
+      </div>
+
+      <div class="section-label">
+        <i data-lucide="images" style="width:12px;height:12px;"></i>
+        Violation Snapshots
+      </div>
+      <div class="metrics-grid" id="thermalGallery">
+        <p class="help-text" id="thermalGalleryEmpty">No violations recorded yet.</p>
+      </div>
+    </section>
+
+    <!-- ── Thermal Config tab ────────────────────────────────────── -->
+    <section id="tab-thermal-config" class="tab-content">
+      <div>
+        <h2>Thermal Camera</h2>
+        <p class="help-text">Full-frame heat check on the FLIR thermal camera. The live scene-max temperature is read over REST; when it exceeds the threshold a violation snapshot is captured. Leave the camera image set to <strong>Auto</strong> level/span so the reading tracks the scene.</p>
+      </div>
+      <div class="form-grid">
+        <div class="form-group">
+          <label>Enabled</label>
+          <select id="thermalEnabled">
+            <option value="false">Off</option>
+            <option value="true">On</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Camera Host / IP</label>
+          <input type="text" id="thermalHost" placeholder="192.168.1.115">
+        </div>
+        <div class="form-group">
+          <label>Username</label>
+          <input type="text" id="thermalUsername" value="admin">
+        </div>
+        <div class="form-group">
+          <label>Password <span id="thermalPwSet" class="help-inline"></span></label>
+          <input type="password" id="thermalPassword" placeholder="leave blank to keep">
+        </div>
+        <div class="form-group" style="grid-column:1/-1">
+          <label>RTSP URL</label>
+          <input type="text" id="thermalRtsp" placeholder="rtsp://admin:pass@192.168.1.115:554/avc">
+        </div>
+        <div class="form-group">
+          <label>Max Temp Threshold (&deg;C)</label>
+          <input type="number" id="thermalMaxTemp" step="0.5" value="40">
+        </div>
+        <div class="form-group">
+          <label>Poll Interval (sec)</label>
+          <input type="number" id="thermalPoll" step="0.5" min="0.5" value="1.0">
+        </div>
+        <div class="form-group">
+          <label>Snapshot Repeat (sec)</label>
+          <input type="number" id="thermalRepeat" step="1" min="0" value="10">
+        </div>
+        <div class="form-group">
+          <label>Max Snapshots Kept</label>
+          <input type="number" id="thermalMaxSnaps" step="1" min="1" value="200">
+        </div>
+      </div>
+      <div class="apply-bar" style="border:none;padding-left:0">
+        <button id="thermalTestBtn" class="btn-secondary">
+          <i data-lucide="plug" style="width:14px;height:14px;"></i>
+          Test Camera
+        </button>
+        <button id="saveThermalBtn" class="btn-primary">
+          <i data-lucide="save" style="width:14px;height:14px;"></i>
+          Save Thermal
+        </button>
+        <span id="thermalTestStatus" class="apply-status"></span>
       </div>
     </section>
 

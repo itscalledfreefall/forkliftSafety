@@ -60,3 +60,19 @@ logging:
 health:
   heartbeat_interval_sec: 1.0
   camera_reconnect_max_backoff_sec: 30.0
+
+# Optional FLIR thermal camera overlay (full-frame scene-max heat check).
+# Streaming-only: scene-max temperature is read from the FLIR REST API
+# (GET /api/image/adjustment "high", Kelvin). Leave the camera image set to
+# Auto level/span so "high" tracks the scene. Set the password via the web UI.
+thermal:
+  enabled: false
+  host: "192.168.1.115"
+  username: "admin"
+  password: ""  # set via the Thermal Config tab (not stored in source)
+  rtsp_url: ""  # set via the Thermal Config tab, e.g. rtsp://<user>:<pass>@<host>:554/avc
+  max_temp_c: 40.0
+  poll_interval_sec: 1.0
+  repeat_interval_sec: 10.0
+  snapshot_dir: "thermal_violations"
+  max_snapshots: 200
