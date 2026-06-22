@@ -39,6 +39,7 @@ from safetyvision.config import (
 from safetyvision.web.calibration import create_calibration_router
 from safetyvision.web.thermal import create_thermal_router
 from safetyvision.web.thermal_monitor import ThermalMonitor
+from safetyvision.workers.capture import _open_rtsp
 
 # ---------------------------------------------------------------------------
 # App setup
@@ -695,16 +696,10 @@ def _get_latest_thermal_frame() -> Optional[np.ndarray]:
 
 
 def _open_thermal_camera(url: str) -> cv2.VideoCapture:
-    for transport in (WEB_RTSP_TRANSPORT, "tcp", "udp"):
-        os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = (
-            f"rtsp_transport;{transport}|fflags;nobuffer|flags;low_delay|framedrop;1|"
-            "probesize;32|analyzeduration;0"
-        )
-        cap = cv2.VideoCapture(url, cv2.CAP_FFMPEG)
-        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-        if cap.isOpened():
-            return cap
-    return cv2.VideoCapture()
+    # Reuse the detection capture opener (GStreamer first, FFMPEG fallback).
+    # Plain FFMPEG decodes the FLIR /avc H.264 unreliably here (slow start +
+    # constant decode errors); GStreamer's decodebin opens it in ~0.5s cleanly.
+    return _open_rtsp(url, 640, 480, int(WEB_PREVIEW_FPS))
 
 
 def _thermal_capture_loop():
