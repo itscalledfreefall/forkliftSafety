@@ -458,10 +458,12 @@ async def apply_config(_token: str = Depends(_check_session)):
     backup = Path(CONFIG_PATH + BACKUP_SUFFIX)
     shutil.copy2(CONFIG_PATH, str(backup))
 
-    # Restart service
+    # Restart only the detection service. The web UI (and thermal monitor)
+    # re-read config live, so restarting it here would needlessly kill this
+    # request mid-flight and wipe the caller's session.
     try:
         result = subprocess.run(
-            ["sudo", "systemctl", "restart", "safetyvision", "safetyvision-ui"],
+            ["sudo", "systemctl", "restart", "safetyvision"],
             capture_output=True, text=True, timeout=15,
         )
         if result.returncode != 0:
