@@ -205,3 +205,83 @@ class TestValidation:
         cfg.alert.yellow_start_y = 0.40
         cfg.alert.red_start_y = 0.75
         validate(cfg)
+
+
+class TestThermalConfig:
+    def test_disabled_thermal_skips_validation(self):
+        # Disabled by default — missing host/rtsp_url must not raise.
+        validate(_valid_cfg())
+
+    def test_loads_thermal_section(self, tmp_path):
+        data = {
+            "input": {"cameras": [{"id": "back", "rtsp_url": "rtsp://cam:554/sub"}]},
+            "thermal": {
+                "enabled": True,
+                "host": "192.168.1.115",
+                "rtsp_url": "rtsp://admin:pw@192.168.1.115:554/avc",
+                "max_temp_c": 55.0,
+                "poll_interval_sec": 2.0,
+            },
+        }
+        p = tmp_path / "t.yaml"
+        p.write_text(yaml.dump(data))
+        cfg = load_config(p)
+        assert cfg.thermal.enabled is True
+        assert cfg.thermal.host == "192.168.1.115"
+        assert cfg.thermal.max_temp_c == 55.0
+        assert cfg.thermal.poll_interval_sec == 2.0
+
+    def test_enabled_requires_host(self):
+        cfg = _valid_cfg()
+        cfg.thermal.enabled = True
+        cfg.thermal.rtsp_url = "rtsp://x/avc"
+        cfg.thermal.host = ""
+        with pytest.raises(ConfigError, match="thermal.host is required"):
+            validate(cfg)
+
+    def test_enabled_requires_rtsp_url(self):
+        cfg = _valid_cfg()
+        cfg.thermal.enabled = True
+        cfg.thermal.host = "192.168.1.115"
+        cfg.thermal.rtsp_url = ""
+        with pytest.raises(ConfigError, match="thermal.rtsp_url is required"):
+            validate(cfg)
+
+    def test_max_temp_out_of_range(self):
+        cfg = _valid_cfg()
+        cfg.thermal.enabled = True
+        cfg.thermal.host = "h"
+        cfg.thermal.rtsp_url = "rtsp://x/avc"
+        cfg.thermal.max_temp_c = 5000.0
+        with pytest.raises(ConfigError, match="thermal.max_temp_c"):
+            validate(cfg)
+
+    def test_poll_interval_must_be_positive(self):
+        cfg = _valid_cfg()
+        cfg.thermal.enabled = True
+        cfg.thermal.host = "h"
+        cfg.thermal.rtsp_url = "rtsp://x/avc"
+        cfg.thermal.poll_interval_sec = 0
+        with pytest.raises(ConfigError, match="thermal.poll_interval_sec"):
+            validate(cfg)
+
+    def test_valid_thermal_passes(self):
+        cfg = _valid_cfg()
+        cfg.thermal.enabled = True
+        cfg.thermal.host = "192.168.1.115"
+        cfg.thermal.rtsp_url = "rtsp://admin:pw@192.168.1.115:554/avc"
+        cfg.thermal.max_temp_c = 40.0
+        validate(cfg)
+
+
+class TestKelvinCelsius:
+    def test_k_to_c(self):
+        from safetyvision.config import k_to_c
+
+        assert k_to_c(273.15) == pytest.approx(0.0)
+        assert k_to_c(306.62) == pytest.approx(33.47, abs=0.01)
+
+    def test_c_to_k_roundtrip(self):
+        from safetyvision.config import c_to_k, k_to_c
+
+        assert k_to_c(c_to_k(42.0)) == pytest.approx(42.0)

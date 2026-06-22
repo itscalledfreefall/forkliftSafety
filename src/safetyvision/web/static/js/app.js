@@ -28,6 +28,7 @@
       tab.classList.add('active');
       document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
       if (tab.dataset.tab === 'dashboard') startStream();
+      if (tab.dataset.tab === 'thermal') { startThermalStream(); loadThermalGallery(); }
     });
   });
 
@@ -306,6 +307,147 @@
   document.getElementById('logoutBtn').addEventListener('click', async () => {
     await fetch('/api/auth/logout', { method: 'POST' });
     window.location.href = '/login';
+  });
+
+  // ── Thermal ─────────────────────────────────────────────────
+  function startThermalStream() {
+    const img = document.getElementById('thermalStream');
+    const offline = document.getElementById('thermalOffline');
+    if (!img) return;
+    img.src = '/api/stream/thermal.mjpg?t=' + Date.now();
+    img.onload = () => { offline.style.display = 'none'; };
+    img.onerror = () => { offline.style.display = 'flex'; };
+  }
+
+  async function loadThermalConfig() {
+    try {
+      const res = await fetch('/api/thermal/config');
+      if (!res.ok) return;
+      const c = await res.json();
+      document.getElementById('thermalEnabled').value = c.enabled ? 'true' : 'false';
+      document.getElementById('thermalHost').value = c.host || '';
+      document.getElementById('thermalUsername').value = c.username || 'admin';
+      document.getElementById('thermalRtsp').value = c.rtsp_url || '';
+      document.getElementById('thermalMaxTemp').value = c.max_temp_c;
+      document.getElementById('thermalPoll').value = c.poll_interval_sec;
+      document.getElementById('thermalRepeat').value = c.repeat_interval_sec;
+      document.getElementById('thermalMaxSnaps').value = c.max_snapshots;
+      document.getElementById('thermalPwSet').textContent = c.password_set ? '(saved)' : '(not set)';
+    } catch {}
+  }
+  loadThermalConfig();
+
+  async function pollThermal() {
+    try {
+      const res = await fetch('/api/thermal/status');
+      if (!res.ok) return;
+      const s = await res.json();
+      document.getElementById('thermalSceneTemp').textContent =
+        s.scene_temp_c == null ? '--' : s.scene_temp_c.toFixed(1);
+      document.getElementById('thermalThreshold').textContent = (s.threshold_c || 0).toFixed(1);
+      document.getElementById('thermalViolationCount').textContent = s.violation_count;
+      const badge = document.getElementById('thermalStateBadge');
+      const card = document.getElementById('thermalSceneCard');
+      if (!s.enabled) {
+        badge.textContent = 'Disabled'; badge.className = 'card-badge badge-dim';
+        card.className = 'metric-card accent-primary';
+      } else if (s.in_violation) {
+        badge.textContent = 'OVER TEMP'; badge.className = 'card-badge badge-red';
+        card.className = 'metric-card accent-red border-red';
+      } else {
+        badge.textContent = 'Normal'; badge.className = 'card-badge badge-green';
+        card.className = 'metric-card accent-green';
+      }
+    } catch {}
+  }
+  pollThermal();
+  setInterval(pollThermal, 2000);
+
+  async function loadThermalGallery() {
+    try {
+      const res = await fetch('/api/thermal/violations');
+      if (!res.ok) return;
+      const data = await res.json();
+      const grid = document.getElementById('thermalGallery');
+      const items = data.items || [];
+      grid.replaceChildren();
+      if (!items.length) {
+        const p = document.createElement('p');
+        p.className = 'help-text';
+        p.textContent = 'No violations recorded yet.';
+        grid.appendChild(p);
+        return;
+      }
+      items.forEach(it => {
+        const card = document.createElement('div');
+        card.className = 'metric-card';
+        const bezel = document.createElement('div');
+        bezel.className = 'video-bezel';
+        bezel.style.aspectRatio = '4 / 3';
+        const img = document.createElement('img');
+        img.src = '/api/thermal/snapshot/' + encodeURIComponent(it.name);
+        img.alt = 'violation';
+        img.style.cssText = 'width:100%;height:100%;object-fit:cover';
+        bezel.appendChild(img);
+        const footer = document.createElement('div');
+        footer.className = 'card-footer';
+        const tag = document.createElement('span');
+        tag.className = 'zone-tag danger';
+        tag.textContent = (it.temp_c != null) ? it.temp_c.toFixed(1) + '°C' : '';
+        const when = document.createElement('span');
+        when.style.marginLeft = '8px';
+        when.textContent = it.timestamp || '';
+        footer.append(tag, when);
+        card.append(bezel, footer);
+        grid.appendChild(card);
+      });
+    } catch {}
+  }
+
+  const thermalTestBtn = document.getElementById('thermalTestBtn');
+  if (thermalTestBtn) thermalTestBtn.addEventListener('click', async () => {
+    const status = document.getElementById('thermalTestStatus');
+    status.textContent = 'Testing…';
+    try {
+      const res = await fetch('/api/thermal/test', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          host: document.getElementById('thermalHost').value,
+          username: document.getElementById('thermalUsername').value,
+          password: document.getElementById('thermalPassword').value,
+        }),
+      });
+      const data = await res.json();
+      status.textContent = data.message || '';
+      toast(data.ok ? 'Camera OK' : 'Camera test failed', data.ok ? 'success' : 'error');
+    } catch { toast('Connection error', 'error'); status.textContent = ''; }
+  });
+
+  const saveThermalBtn = document.getElementById('saveThermalBtn');
+  if (saveThermalBtn) saveThermalBtn.addEventListener('click', async () => {
+    try {
+      const res = await fetch('/api/thermal/config', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          enabled: document.getElementById('thermalEnabled').value === 'true',
+          host: document.getElementById('thermalHost').value,
+          username: document.getElementById('thermalUsername').value,
+          password: document.getElementById('thermalPassword').value,
+          rtsp_url: document.getElementById('thermalRtsp').value,
+          max_temp_c: parseFloat(document.getElementById('thermalMaxTemp').value),
+          poll_interval_sec: parseFloat(document.getElementById('thermalPoll').value),
+          repeat_interval_sec: parseFloat(document.getElementById('thermalRepeat').value),
+          max_snapshots: parseInt(document.getElementById('thermalMaxSnaps').value, 10),
+          snapshot_dir: 'thermal_violations',
+        }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        toast('Thermal saved — Apply & Restart to take effect');
+        document.getElementById('thermalPassword').value = '';
+        loadThermalConfig();
+      } else toast(data.detail || 'Save failed', 'error');
+    } catch { toast('Connection error', 'error'); }
   });
 
   // Render lucide icons declared via data-lucide attributes

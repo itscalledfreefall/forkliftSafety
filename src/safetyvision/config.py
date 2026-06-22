@@ -109,6 +109,27 @@ class HealthConfig:
 
 
 @dataclass
+class ThermalConfig:
+    """Optional FLIR thermal camera overlay (full-frame scene-max heat check).
+
+    The camera is treated as streaming-only: the violation threshold is checked
+    against the live scene-max temperature read from the FLIR REST API
+    (``GET /api/image/adjustment`` ``high``, in Kelvin). No camera writes.
+    """
+
+    enabled: bool = False
+    host: str = ""  # FLIR REST/web host, e.g. "192.168.1.115"
+    username: str = "admin"
+    password: str = ""  # set via the web UI; same trust model as RTSP creds
+    rtsp_url: str = ""  # rtsp://.../avc — the Thermal View feed
+    max_temp_c: float = 40.0  # violation threshold
+    poll_interval_sec: float = 1.0  # how often scene-max is read
+    repeat_interval_sec: float = 10.0  # min gap between snapshots while in violation
+    snapshot_dir: str = "thermal_violations"
+    max_snapshots: int = 200
+
+
+@dataclass
 class SafetyVisionConfig:
     input: InputConfig = field(default_factory=InputConfig)
     model: ModelConfig = field(default_factory=ModelConfig)
@@ -116,6 +137,17 @@ class SafetyVisionConfig:
     perf: PerfConfig = field(default_factory=PerfConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     health: HealthConfig = field(default_factory=HealthConfig)
+    thermal: ThermalConfig = field(default_factory=ThermalConfig)
+
+
+def k_to_c(kelvin: float) -> float:
+    """Convert Kelvin to Celsius."""
+    return kelvin - 273.15
+
+
+def c_to_k(celsius: float) -> float:
+    """Convert Celsius to Kelvin."""
+    return celsius + 273.15
 
 
 def _merge(dc_class, data: dict):
@@ -175,6 +207,7 @@ def load_config(path: str | Path | None = None) -> SafetyVisionConfig:
         perf=_merge(PerfConfig, raw.get("perf")),
         logging=_merge(LoggingConfig, raw.get("logging")),
         health=_merge(HealthConfig, raw.get("health")),
+        thermal=_merge(ThermalConfig, raw.get("thermal")),
     )
     validate(cfg)
     return cfg
@@ -264,3 +297,18 @@ def validate(cfg: SafetyVisionConfig) -> None:
         )
     if cfg.perf.max_queue_size < 1:
         raise ConfigError("perf.max_queue_size must be >= 1")
+
+    # Thermal overlay (only validated when enabled).
+    if cfg.thermal.enabled:
+        if not cfg.thermal.host:
+            raise ConfigError("thermal.host is required when thermal.enabled")
+        if not cfg.thermal.rtsp_url:
+            raise ConfigError("thermal.rtsp_url is required when thermal.enabled")
+        if not -40.0 <= cfg.thermal.max_temp_c <= 1000.0:
+            raise ConfigError("thermal.max_temp_c must be between -40 and 1000")
+        if cfg.thermal.poll_interval_sec <= 0:
+            raise ConfigError("thermal.poll_interval_sec must be positive")
+        if cfg.thermal.repeat_interval_sec < 0:
+            raise ConfigError("thermal.repeat_interval_sec must be non-negative")
+        if cfg.thermal.max_snapshots < 1:
+            raise ConfigError("thermal.max_snapshots must be >= 1")

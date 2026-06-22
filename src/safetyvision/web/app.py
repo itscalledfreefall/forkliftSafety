@@ -30,11 +30,15 @@ from starlette.middleware.cors import CORSMiddleware
 from safetyvision.config import (
     ConfigError,
     SafetyVisionConfig,
+    ThermalConfig,
+    _merge,
     get_effective_zone_thresholds,
     load_config,
     validate,
 )
 from safetyvision.web.calibration import create_calibration_router
+from safetyvision.web.thermal import create_thermal_router
+from safetyvision.web.thermal_monitor import ThermalMonitor
 
 # ---------------------------------------------------------------------------
 # App setup
@@ -665,6 +669,143 @@ async def stream(request: Request):
 
 
 # ---------------------------------------------------------------------------
+# Thermal (FLIR) stream + scene-max violation monitor
+# ---------------------------------------------------------------------------
+_thermal_jpeg: Optional[bytes] = None  # encoded preview frame
+_thermal_raw: Optional[np.ndarray] = None  # latest BGR frame (for snapshots)
+_thermal_lock = threading.Lock()
+_thermal_thread: Optional[threading.Thread] = None
+_thermal_monitor: Optional[ThermalMonitor] = None
+
+
+def _get_thermal_cfg() -> ThermalConfig:
+    """Build the ThermalConfig from the current raw config (no full validation)."""
+    return _merge(ThermalConfig, _load_raw_config().get("thermal"))
+
+
+def _get_latest_thermal_frame() -> Optional[np.ndarray]:
+    with _thermal_lock:
+        return None if _thermal_raw is None else _thermal_raw.copy()
+
+
+def _open_thermal_camera(url: str) -> cv2.VideoCapture:
+    for transport in (WEB_RTSP_TRANSPORT, "tcp", "udp"):
+        os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = (
+            f"rtsp_transport;{transport}|fflags;nobuffer|flags;low_delay|framedrop;1|"
+            "probesize;32|analyzeduration;0"
+        )
+        cap = cv2.VideoCapture(url, cv2.CAP_FFMPEG)
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        if cap.isOpened():
+            return cap
+    return cv2.VideoCapture()
+
+
+def _thermal_capture_loop():
+    """Background thread: decode the FLIR feed for the Thermal View + monitor.
+
+    Unlike the main preview, no zone overlay is drawn; the raw frame is kept so
+    the violation monitor can snapshot it. Idle (no camera open) while disabled.
+    """
+    global _thermal_jpeg, _thermal_raw
+    cap = None
+    target_interval = 1.0 / max(WEB_PREVIEW_FPS, 1.0)
+    next_frame_time = time.monotonic()
+    read_failures = 0
+
+    while True:
+        cfg = _get_thermal_cfg()
+        if not cfg.enabled or not cfg.rtsp_url:
+            if cap is not None:
+                cap.release()
+                cap = None
+            with _thermal_lock:
+                _thermal_jpeg = None
+                _thermal_raw = None
+            time.sleep(1.0)
+            continue
+
+        if cap is None or not cap.isOpened():
+            cap = _open_thermal_camera(cfg.rtsp_url)
+            if not cap.isOpened():
+                placeholder = np.zeros((480, 640, 3), dtype=np.uint8)
+                cv2.putText(placeholder, "Thermal camera unavailable", (90, 230),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 255), 2)
+                _, buf = cv2.imencode(".jpg", placeholder, [cv2.IMWRITE_JPEG_QUALITY, WEB_JPEG_QUALITY])
+                with _thermal_lock:
+                    _thermal_jpeg = buf.tobytes()
+                time.sleep(2.0)
+                continue
+
+        now_mono = time.monotonic()
+        if now_mono < next_frame_time:
+            time.sleep(next_frame_time - now_mono)
+        next_frame_time = time.monotonic() + target_interval
+
+        cap.grab()
+        ret, frame = cap.read()
+        if not ret:
+            read_failures += 1
+            if read_failures >= 5:
+                cap.release()
+                cap = None
+                read_failures = 0
+                time.sleep(0.5)
+            continue
+        read_failures = 0
+
+        with _thermal_lock:
+            _thermal_raw = frame
+
+        out = frame
+        if WEB_PREVIEW_WIDTH > 0 and out.shape[1] > WEB_PREVIEW_WIDTH:
+            scale = WEB_PREVIEW_WIDTH / float(out.shape[1])
+            out_h = max(1, int(out.shape[0] * scale))
+            out = cv2.resize(out, (WEB_PREVIEW_WIDTH, out_h), interpolation=cv2.INTER_AREA)
+        _, buf = cv2.imencode(".jpg", out, [cv2.IMWRITE_JPEG_QUALITY, WEB_JPEG_QUALITY])
+        with _thermal_lock:
+            _thermal_jpeg = buf.tobytes()
+
+
+def _ensure_thermal_running() -> ThermalMonitor:
+    """Start the thermal capture thread + violation monitor (idempotent)."""
+    global _thermal_thread, _thermal_monitor
+    if _thermal_thread is None or not _thermal_thread.is_alive():
+        _thermal_thread = threading.Thread(target=_thermal_capture_loop, daemon=True)
+        _thermal_thread.start()
+    if _thermal_monitor is None:
+        _thermal_monitor = ThermalMonitor(
+            get_cfg=_get_thermal_cfg,
+            get_latest_frame=_get_latest_thermal_frame,
+        )
+        _thermal_monitor.start()
+    return _thermal_monitor
+
+
+async def _mjpeg_thermal_generator():
+    _ensure_thermal_running()
+    last_frame = None
+    while True:
+        with _thermal_lock:
+            frame = _thermal_jpeg
+        if frame is not None and frame is not last_frame:
+            last_frame = frame
+            yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + frame + b"\r\n"
+        await asyncio.sleep(0.033)
+
+
+@app.get("/api/stream/thermal.mjpg")
+async def thermal_stream(request: Request):
+    token = request.cookies.get("sv_session")
+    if not token or token not in SESSION_TOKENS:
+        raise HTTPException(status_code=401)
+    return StreamingResponse(
+        _mjpeg_thermal_generator(),
+        media_type="multipart/x-mixed-replace; boundary=frame",
+    )
+
+
+# ---------------------------------------------------------------------------
 # Frontend pages
 # ---------------------------------------------------------------------------
 @app.get("/", response_class=HTMLResponse)
@@ -688,6 +829,15 @@ app.include_router(
     create_calibration_router(
         check_session=_check_session,
         get_config_path=lambda: CONFIG_PATH,
+    )
+)
+
+# Mount the thermal API router (FLIR scene-max heat check + violation gallery).
+app.include_router(
+    create_thermal_router(
+        check_session=_check_session,
+        get_config_path=lambda: CONFIG_PATH,
+        get_monitor=_ensure_thermal_running,
     )
 )
 
@@ -801,6 +951,10 @@ def main():
     global CONFIG_PATH
     if args.config:
         CONFIG_PATH = args.config
+
+    # Start the thermal capture + scene-max violation monitor now that
+    # CONFIG_PATH is final. Both self-gate on thermal.enabled.
+    _ensure_thermal_running()
 
     uvicorn.run(app, host=args.host, port=args.port, log_level="info")
 
