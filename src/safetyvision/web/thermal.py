@@ -8,6 +8,7 @@ circular imports. The camera is streaming-only — no measurement writes.
 from __future__ import annotations
 
 import re
+import urllib.parse
 from pathlib import Path
 from typing import Callable
 
@@ -20,6 +21,20 @@ from safetyvision.config import ConfigError, ThermalConfig, _merge, load_config
 from safetyvision.web.thermal_monitor import FlirClient
 
 _SNAPSHOT_RE = re.compile(r"^thermal_\d+\.jpg$")
+
+
+def _is_bare_host(host: str) -> bool:
+    """True if ``host`` is a bare ``hostname[:port]`` — no scheme, path, or userinfo.
+
+    Blocks the camera REST base (``http://{host}``) from being steered to an
+    attacker-chosen URL via embedded ``@``/path/query.
+    """
+    if not host or "/" in host or "@" in host or " " in host:
+        return False
+    parts = urllib.parse.urlsplit("//" + host)
+    if parts.path or parts.query or parts.fragment or parts.username:
+        return False
+    return bool(parts.hostname)
 
 
 class ThermalConfigPayload(BaseModel):
@@ -125,9 +140,21 @@ def create_thermal_router(
         cfg = _cfg()
         host = payload.host or cfg.host
         username = payload.username or cfg.username
-        password = payload.password or cfg.password
         if not host:
             raise HTTPException(status_code=400, detail="host is required")
+        if not _is_bare_host(host):
+            raise HTTPException(status_code=400, detail="invalid host (use hostname[:port])")
+        # Only replay the stored password to the already-saved host; testing any
+        # other host requires the caller to retype it, so the saved secret can
+        # never be exfiltrated to an attacker-chosen target.
+        if payload.password:
+            password = payload.password
+        elif host == cfg.host:
+            password = cfg.password
+        else:
+            raise HTTPException(
+                status_code=400, detail="password required to test a different host"
+            )
         ok, msg = FlirClient(host, username, password).test()
         return JSONResponse({"ok": ok, "message": msg})
 
