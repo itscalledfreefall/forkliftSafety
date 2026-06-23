@@ -18,9 +18,10 @@ from safetyvision.types import DetectionEvent, PipelineMetrics
 class MetricsCollector:
     """Thread-safe metrics collection with rolling windows."""
 
-    def __init__(self, window_sec: float = 5.0):
+    def __init__(self, window_sec: float = 5.0, state_path: str | Path | None = None):
         self._lock = threading.Lock()
         self._window = window_sec
+        self._state_path = Path(state_path) if state_path else None
         self._capture_frame_times: deque[float] = deque()
         self._inference_frame_times: deque[float] = deque()
         self._decision_frame_times: deque[float] = deque()
@@ -35,6 +36,38 @@ class MetricsCollector:
         # Last detection event values (overwritten each event)
         self._last_distance_m: Optional[float] = None
         self._last_zone_level: str = ""
+        self._load_state()
+
+    def _load_state(self) -> None:
+        if self._state_path is None or not self._state_path.exists():
+            return
+        try:
+            data = json.loads(self._state_path.read_text(encoding="utf-8"))
+        except Exception as e:
+            logger.warning("Failed to load metrics state from {}: {}", self._state_path, e)
+            return
+
+        self._alert_count = max(0, int(data.get("alert_count", 0)))
+        self._yellow_zone_entries = max(0, int(data.get("yellow_zone_entries", 0)))
+        self._red_zone_entries = max(0, int(data.get("red_zone_entries", 0)))
+
+    def _persist_state_locked(self) -> None:
+        if self._state_path is None:
+            return
+
+        data = {
+            "alert_count": self._alert_count,
+            "yellow_zone_entries": self._yellow_zone_entries,
+            "red_zone_entries": self._red_zone_entries,
+            "updated_at": time.time(),
+        }
+        tmp_path = self._state_path.with_name(f"{self._state_path.name}.tmp")
+        try:
+            self._state_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp_path.write_text(json.dumps(data, sort_keys=True), encoding="utf-8")
+            tmp_path.replace(self._state_path)
+        except Exception as e:
+            logger.warning("Failed to persist metrics state to {}: {}", self._state_path, e)
 
     def _record_stage_frame(self, dq: deque[float]) -> None:
         now = time.monotonic()
@@ -84,14 +117,17 @@ class MetricsCollector:
     def record_alert(self) -> None:
         with self._lock:
             self._alert_count += 1
+            self._persist_state_locked()
 
     def record_yellow_entry(self) -> None:
         with self._lock:
             self._yellow_zone_entries += 1
+            self._persist_state_locked()
 
     def record_red_entry(self) -> None:
         with self._lock:
             self._red_zone_entries += 1
+            self._persist_state_locked()
 
     def record_detection_event(self, event: DetectionEvent) -> None:
         """Store the latest distance / zone for dashboard display."""

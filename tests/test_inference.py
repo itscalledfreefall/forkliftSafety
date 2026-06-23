@@ -105,6 +105,30 @@ class TestInferenceWorkerConstruction:
         assert worker._zone_red_cb is not None
         assert worker._prev_zone_levels == {}
 
+    def test_zone_entry_transitions_count_once_per_episode(self):
+        cfg = SafetyVisionConfig()
+        cfg.input.cameras = [CameraConfig(id="back", rtsp_url="rtsp://x/y")]
+        counts = {"yellow": 0, "red": 0}
+        worker = InferenceWorker(
+            cfg,
+            Queue(),
+            Queue(),
+            threading.Event(),
+            zone_yellow_cb=lambda: counts.__setitem__("yellow", counts["yellow"] + 1),
+            zone_red_cb=lambda: counts.__setitem__("red", counts["red"] + 1),
+        )
+
+        worker._record_zone_entry_transition("back", "")
+        worker._record_zone_entry_transition("back", "medium")
+        worker._record_zone_entry_transition("back", "medium")
+        worker._record_zone_entry_transition("back", "danger")
+        worker._record_zone_entry_transition("back", "danger")
+        worker._record_zone_entry_transition("back", "medium")
+        worker._record_zone_entry_transition("back", "")
+        worker._record_zone_entry_transition("back", "danger")
+
+        assert counts == {"yellow": 1, "red": 2}
+
 
 class TestHailoPreprocess:
     """HailoBackend._preprocess doesn't require hardware or the hailo_platform module."""

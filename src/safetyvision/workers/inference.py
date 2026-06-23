@@ -151,6 +151,18 @@ class InferenceWorker:
                 zone_level = "medium"
         return zone_level, None
 
+    def _record_zone_entry_transition(self, camera_id: str, zone_level: str) -> None:
+        """Count transitions into stable warning zones per camera."""
+        prev_zone_level = self._prev_zone_levels.get(camera_id, "")
+
+        if zone_level == "medium" and prev_zone_level == "":
+            if self._zone_yellow_cb:
+                self._zone_yellow_cb()
+        elif zone_level == "danger" and prev_zone_level in ("", "medium"):
+            if self._zone_red_cb:
+                self._zone_red_cb()
+        self._prev_zone_levels[camera_id] = zone_level
+
     def _run(self) -> None:
         _pin_to_cores(self._cfg.perf.inference_cpu_cores)
 
@@ -176,22 +188,15 @@ class InferenceWorker:
             zone_level, distance_m = self._classify_zone(
                 pkt.camera_id, camera_cfg, dets, frame_h, frame_w
             )
-            prev_zone_level = self._prev_zone_levels.get(pkt.camera_id, "")
-
-            if zone_level == "medium" and prev_zone_level == "":
-                if self._zone_yellow_cb:
-                    self._zone_yellow_cb()
-            elif zone_level == "danger" and prev_zone_level in ("", "medium"):
-                if self._zone_red_cb:
-                    self._zone_red_cb()
-            self._prev_zone_levels[pkt.camera_id] = zone_level
+            stable_zone_level = zone_level if smoothed else ""
+            self._record_zone_entry_transition(pkt.camera_id, stable_zone_level)
 
             event = DetectionEvent(
                 timestamp_ns=pkt.timestamp_ns,
                 person_detected=smoothed,
                 confidence_max=max_conf,
                 bbox_count=len(dets),
-                zone_level=zone_level,
+                zone_level=stable_zone_level,
                 camera_id=pkt.camera_id,
                 distance_m=distance_m,
             )
