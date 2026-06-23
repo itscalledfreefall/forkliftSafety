@@ -125,13 +125,17 @@ class DecisionWorker:
                 elapsed = now_ns - cam_state.last_trigger_ns
                 if elapsed >= repeat_ns:
                     cam_state.last_trigger_ns = now_ns
-                    cam_state.last_sound_key = sound_key
                     cam_state.alert_count += 1
+                    # Repeat at the highest zone seen this episode. Do NOT lower
+                    # last_sound_key to the current frame's zone: a person on the
+                    # danger/medium boundary flips zones frame-to-frame, and a
+                    # downgrade here would make the next danger frame look like a
+                    # fresh escalation and fire immediately, bypassing the throttle.
                     return AlertEvent(
                         timestamp_ns=now_ns,
                         trigger_reason="repeat_while_present",
                         cooldown_active=True,
-                        sound_key=sound_key,
+                        sound_key=cam_state.last_sound_key,
                         camera_id=event.camera_id,
                     )
 

@@ -214,6 +214,30 @@ class TestMultiPersonZones:
         assert alert.cooldown_active is False
         assert alert.sound_key == "danger"
 
+    def test_boundary_flapping_does_not_respawn_escalation(self, worker):
+        """Person on the danger/medium boundary flips zone frame-to-frame.
+
+        Once danger has fired, a repeat must keep the highest zone (danger) and
+        the next danger frame must NOT be treated as a fresh escalation, or the
+        alert audio spams back-to-back.
+        """
+        worker.process_event(_make_event(person=True, ts_ns=1_000_000_000, zone_level="danger"))
+
+        # Repeat fires on a medium frame after the interval; it must announce the
+        # highest zone of the episode (danger), not downgrade to medium.
+        rep = worker.process_event(
+            _make_event(person=True, ts_ns=6_500_000_000, zone_level="medium")
+        )
+        assert rep is not None
+        assert rep.trigger_reason == "repeat_while_present"
+        assert rep.sound_key == "danger"
+
+        # The very next danger frame must not re-fire as an escalation.
+        nxt = worker.process_event(
+            _make_event(person=True, ts_ns=6_600_000_000, zone_level="danger")
+        )
+        assert nxt is None
+
     def test_person_moves_to_green_then_clears(self, worker):
         """Person moves from red to green, eventually clears."""
         worker.process_event(_make_event(person=True, ts_ns=1_000_000_000, zone_level="danger"))
