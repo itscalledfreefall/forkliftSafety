@@ -67,7 +67,9 @@ class Supervisor:
     def __init__(self, cfg: SafetyVisionConfig):
         self.cfg = cfg
         self._stop = threading.Event()
-        self._metrics = MetricsCollector()
+        self._metrics = MetricsCollector(
+            state_path=Path(cfg.logging.log_dir) / "metrics_state.json"
+        )
 
         qsize = cfg.perf.max_queue_size
         self._capture_q: Queue = Queue(maxsize=qsize * max(1, len(cfg.input.cameras)))

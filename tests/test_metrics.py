@@ -60,6 +60,20 @@ class TestMetricsCollector:
         assert snap.yellow_zone_entries == 1
         assert snap.red_zone_entries == 2
 
+    def test_persistent_counts_load_on_restart(self, tmp_path):
+        state_path = tmp_path / "metrics_state.json"
+        m = MetricsCollector(state_path=state_path)
+        m.record_alert()
+        m.record_yellow_entry()
+        m.record_red_entry()
+        m.record_red_entry()
+
+        restarted = MetricsCollector(state_path=state_path)
+        snap = restarted.snapshot()
+        assert snap.alert_count == 1
+        assert snap.yellow_zone_entries == 1
+        assert snap.red_zone_entries == 2
+
     def test_uptime_increases(self):
         m = MetricsCollector()
         time.sleep(0.05)
