@@ -176,20 +176,27 @@ async def get_camera_configs(_token: str = Depends(_check_session)):
 @app.post("/api/config/zones")
 async def set_zones(body: ZoneConfig, _token: str = Depends(_check_session)):
     """Validate and save zone cut lines."""
+    yellow = round(body.yellow_start_y, 4)
+    red = round(body.red_start_y, 4)
+
+    raw = _load_raw_config()
+    # Write the global fallback used by cameras without their own zone block.
+    raw.setdefault("alert", {}).update({"yellow_start_y": yellow, "red_start_y": red})
+    # A per-camera ``zone`` block overrides the global values (see
+    # get_effective_zone_thresholds), so any existing override must be updated too
+    # or the slider would be silently shadowed.
+    for cam in raw.get("input", {}).get("cameras", []) or []:
+        if isinstance(cam, dict) and isinstance(cam.get("zone"), dict):
+            cam["zone"]["yellow_start_y"] = yellow
+            cam["zone"]["red_start_y"] = red
+
     try:
-        cfg = _build_config_with_overrides({"alert": {
-            "yellow_start_y": body.yellow_start_y,
-            "red_start_y": body.red_start_y,
-        }})
-        validate(cfg)
+        validate(_build_config_from_raw(raw))
     except ConfigError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    _update_config_section("alert", {
-        "yellow_start_y": round(body.yellow_start_y, 4),
-        "red_start_y": round(body.red_start_y, 4),
-    })
-    return {"ok": True, "yellow_start_y": body.yellow_start_y, "red_start_y": body.red_start_y}
+    _write_raw_config(raw)
+    return {"ok": True, "yellow_start_y": yellow, "red_start_y": red}
 
 
 @app.post("/api/config/timing")
@@ -488,7 +495,13 @@ _stream_thread: Optional[threading.Thread] = None
 
 
 def _preview_urls() -> list[str]:
-    """Return RTSP URLs to try for the preview stream, preferring main streams."""
+    """Return RTSP URLs to try for the preview stream, preferring sub streams.
+
+    The sub stream is low-res H.264; the main stream is often HEVC 1080p, which
+    the Pi 5 (no hardware video decoder) can only decode in software at high CPU
+    cost — that tanks preview FPS and adds latency. The IP camera serves multiple
+    RTSP clients fine, so sharing the sub stream with the detector is harmless.
+    """
     raw = _load_raw_config()
     cameras = raw.get("input", {}).get("cameras") or []
     mains: list[str] = []
@@ -500,11 +513,26 @@ def _preview_urls() -> list[str]:
             mains.append(cam["rtsp_url_main"])
         if cam.get("rtsp_url"):
             subs.append(cam["rtsp_url"])
-    return mains + subs
+    return subs + mains
+
+
+def _gst_preview_pipeline(url: str) -> str:
+    """Low-latency GStreamer pipeline for the preview.
+
+    ``drop-on-latency`` + ``appsink max-buffers=1 drop=true`` always serve the
+    freshest decoded frame and discard the rest, so latency cannot accumulate the
+    way it does with the buffering FFmpeg backend. No width/height is forced, so
+    the source aspect ratio is preserved (resizing happens later if needed).
+    """
+    return (
+        f"rtspsrc location={url} protocols=tcp latency=50 drop-on-latency=true "
+        f"! decodebin ! videoconvert ! video/x-raw,format=BGR "
+        f"! appsink sync=false max-buffers=1 drop=true"
+    )
 
 
 def _open_stream_camera() -> cv2.VideoCapture:
-    """Open an RTSP stream for the web UI preview (first camera, main if available)."""
+    """Open an RTSP stream for the web UI preview (first camera, sub if available)."""
     raw = _load_raw_config()
     inp = raw.get("input", {})
     width = int(inp.get("width", 640))
@@ -512,6 +540,11 @@ def _open_stream_camera() -> cv2.VideoCapture:
     fps = int(inp.get("target_fps", 15))
 
     for url in _preview_urls():
+        # Prefer GStreamer (freshest-frame-only); fall back to FFmpeg if needed.
+        cap = cv2.VideoCapture(_gst_preview_pipeline(url), cv2.CAP_GSTREAMER)
+        if cap.isOpened():
+            return cap
+
         transports = [WEB_RTSP_TRANSPORT, "tcp", "udp"]
         tried: set[str] = set()
         for transport in transports:
@@ -612,16 +645,17 @@ def _stream_capture_loop():
             continue
         read_failures = 0
 
-        # Refresh zone config every 2 seconds
+        # Refresh zone config every 2 seconds. Resolve thresholds exactly as the
+        # detector does (per-camera ``zone`` first, then global ``alert`` fallback)
+        # so the overlay tracks the values that actually drive alerts.
         now = time.time_ns()
         if now - config_refresh_ns > 2_000_000_000:
             raw = _load_raw_config()
-            alert = raw.get("alert", {})
-            yellow_y = alert.get("yellow_start_y", 0.33)
-            red_y = alert.get("red_start_y", 0.66)
-            cameras = raw.get("input", {}).get("cameras", [])
-            if cameras:
-                camera_mode = cameras[0].get("mode", "zone")
+            cfg = _build_config_from_raw(raw)
+            camera = cfg.input.cameras[0] if cfg.input.cameras else None
+            yellow_y, red_y = get_effective_zone_thresholds(cfg, camera)
+            if camera is not None:
+                camera_mode = camera.mode
             config_refresh_ns = now
 
         if camera_mode != "distance":
