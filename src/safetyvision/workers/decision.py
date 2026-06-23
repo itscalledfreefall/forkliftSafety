@@ -20,6 +20,7 @@ class _CameraState:
     last_trigger_ns: int = 0
     last_person_ns: int = 0
     alert_count: int = 0
+    last_sound_key: str = ""
 
 
 class DecisionWorker:
@@ -87,6 +88,7 @@ class DecisionWorker:
             if in_alert_zone:
                 cam_state.state = AlertState.TRIGGERED
                 cam_state.last_trigger_ns = now_ns
+                cam_state.last_sound_key = sound_key
                 cam_state.alert_count += 1
                 return AlertEvent(
                     timestamp_ns=now_ns,
@@ -101,6 +103,7 @@ class DecisionWorker:
                 elapsed = now_ns - cam_state.last_person_ns
                 if elapsed >= clear_ns:
                     cam_state.state = AlertState.IDLE
+                    cam_state.last_sound_key = ""
                     logger.info(
                         "[{}] Alert cleared after {:.1f}s of no person",
                         event.camera_id or "default",
@@ -108,9 +111,21 @@ class DecisionWorker:
                     )
                     return None
             else:
+                if self._sound_priority(sound_key) > self._sound_priority(cam_state.last_sound_key):
+                    cam_state.last_trigger_ns = now_ns
+                    cam_state.last_sound_key = sound_key
+                    cam_state.alert_count += 1
+                    return AlertEvent(
+                        timestamp_ns=now_ns,
+                        trigger_reason="zone_escalated",
+                        cooldown_active=False,
+                        sound_key=sound_key,
+                        camera_id=event.camera_id,
+                    )
                 elapsed = now_ns - cam_state.last_trigger_ns
                 if elapsed >= repeat_ns:
                     cam_state.last_trigger_ns = now_ns
+                    cam_state.last_sound_key = sound_key
                     cam_state.alert_count += 1
                     return AlertEvent(
                         timestamp_ns=now_ns,
@@ -121,6 +136,14 @@ class DecisionWorker:
                     )
 
         return None
+
+    @staticmethod
+    def _sound_priority(sound_key: str) -> int:
+        if sound_key == "danger":
+            return 2
+        if sound_key == "medium":
+            return 1
+        return 0
 
     def _classify_sound_key(self, event: DetectionEvent) -> str:
         if not event.person_detected:

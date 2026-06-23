@@ -202,6 +202,18 @@ class TestMultiPersonZones:
         assert alert is not None
         assert alert.sound_key == "danger"
 
+    def test_zone_escalation_triggers_immediately(self, worker):
+        worker.process_event(_make_event(person=True, ts_ns=1_000_000_000, zone_level="medium"))
+
+        alert = worker.process_event(
+            _make_event(person=True, ts_ns=2_000_000_000, zone_level="danger")
+        )
+
+        assert alert is not None
+        assert alert.trigger_reason == "zone_escalated"
+        assert alert.cooldown_active is False
+        assert alert.sound_key == "danger"
+
     def test_person_moves_to_green_then_clears(self, worker):
         """Person moves from red to green, eventually clears."""
         worker.process_event(_make_event(person=True, ts_ns=1_000_000_000, zone_level="danger"))

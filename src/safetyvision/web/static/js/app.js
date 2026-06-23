@@ -71,6 +71,16 @@
     el.textContent = value.toFixed(digits);
   }
 
+  function setMetricCount(id, value) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    if (typeof value !== 'number' || Number.isNaN(value)) {
+      el.textContent = '--';
+      return;
+    }
+    el.textContent = String(Math.trunc(value));
+  }
+
   const ZONE_LABEL = { green: 'Safe Zone', medium: 'Medium Zone', danger: 'Danger Zone' };
   const ZONE_TO_VALUE_COLOR = { green: 'value-green', medium: 'value-yellow', danger: 'value-red' };
   const ZONE_TO_ACCENT = { green: 'accent-green', medium: 'accent-yellow', danger: 'accent-red' };
@@ -119,12 +129,16 @@
         setMetricValue('metricLatency', NaN, 1);
         setMetricValue('metricCaptureFps', NaN, 1);
         setMetricValue('metricInferenceFps', NaN, 1);
+        setMetricCount('metricYellowEntries', NaN);
+        setMetricCount('metricRedEntries', NaN);
         return;
       }
       setMetricValue('metricFps', data.fps, 1);
       setMetricValue('metricLatency', data.latency_total_ms, 1);
       setMetricValue('metricCaptureFps', data.capture_fps, 1);
       setMetricValue('metricInferenceFps', data.inference_fps, 1);
+      setMetricCount('metricYellowEntries', data.yellow_zone_entries);
+      setMetricCount('metricRedEntries', data.red_zone_entries);
 
       // Live-feed FPS readout (rounded to whole number, like the mockup)
       const vfps = document.getElementById('videoFps');

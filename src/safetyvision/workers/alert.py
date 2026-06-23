@@ -170,6 +170,8 @@ class AlertWorker:
             except Empty:
                 continue
 
+            alert = self._collapse_pending_alerts(alert)
+
             logger.info(
                 "Alert triggered: reason={}, cooldown={}, sound_key={}",
                 alert.trigger_reason,
@@ -192,3 +194,27 @@ class AlertWorker:
             )
 
         logger.info("Alert worker stopped")
+
+    def _collapse_pending_alerts(self, alert: AlertEvent) -> AlertEvent:
+        """Discard stale queued alerts, preferring higher severity and newer events."""
+        selected = alert
+        while True:
+            try:
+                pending: AlertEvent = self._alert_queue.get_nowait()
+            except Empty:
+                return selected
+
+            pending_priority = self._alert_priority(pending.sound_key)
+            selected_priority = self._alert_priority(selected.sound_key)
+            if pending_priority > selected_priority:
+                selected = pending
+            elif pending_priority == selected_priority and pending.timestamp_ns >= selected.timestamp_ns:
+                selected = pending
+
+    @staticmethod
+    def _alert_priority(sound_key: str) -> int:
+        if sound_key == "danger":
+            return 2
+        if sound_key == "medium":
+            return 1
+        return 0
