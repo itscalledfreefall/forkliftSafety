@@ -451,9 +451,12 @@ main { animation: page-fade-in 250ms ease-out; }
 /* ── Bottom row: Closest Person + Video ─────────────────────────────── */
 .bottom-row {
   display: grid;
-  grid-template-columns: 300px 1fr;
+  grid-template-columns: minmax(280px, 320px) minmax(0, 1fr);
   gap: 12px;
   align-items: start;
+}
+.bottom-row.video-only {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .closest-person-card {
@@ -578,6 +581,7 @@ main { animation: page-fade-in 250ms ease-out; }
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  min-width: 0;
 }
 .video-header {
   padding: 10px 16px;

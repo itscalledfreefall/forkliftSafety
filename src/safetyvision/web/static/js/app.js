@@ -77,10 +77,12 @@
 
   function updateDistanceCard(data) {
     const card = document.getElementById('distanceCard');
+    const row = document.getElementById('dashboardBottomRow');
     const distEl = document.getElementById('metricDistance');
     const zoneEl = document.getElementById('metricZoneLevel');
     if (!card) return;
     const isDistance = data && data.zone_mode === 'distance';
+    if (row) row.classList.toggle('video-only', !isDistance);
     card.style.display = isDistance ? '' : 'none';
     if (!isDistance) return;
 
