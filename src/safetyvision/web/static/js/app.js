@@ -228,7 +228,7 @@
   });
 
   // ── Save Zones ──────────────────────────────────────────────
-  document.getElementById('saveZonesBtn').addEventListener('click', async () => {
+  async function saveZones(silent) {
     const yy = parseFloat(yellowSlider.value);
     const ry = parseFloat(redSlider.value);
     try {
@@ -238,10 +238,18 @@
         body: JSON.stringify({ yellow_start_y: yy, red_start_y: ry }),
       });
       const data = await res.json();
-      if (res.ok) toast('Zones saved');
+      if (res.ok) toast(silent ? 'Zones updated — live view follows shortly' : 'Zones saved');
       else toast(data.detail || 'Save failed', 'error');
     } catch { toast('Connection error', 'error'); }
-  });
+  }
+
+  document.getElementById('saveZonesBtn').addEventListener('click', () => saveZones(false));
+
+  // Auto-save when a slider is released so the live camera overlay follows the
+  // new cut lines without needing a separate Save click. (Alerts still require
+  // Apply & Restart.)
+  yellowSlider.addEventListener('change', () => saveZones(true));
+  redSlider.addEventListener('change', () => saveZones(true));
 
   // ── Save Timing ─────────────────────────────────────────────
   document.getElementById('saveTimingBtn').addEventListener('click', async () => {
