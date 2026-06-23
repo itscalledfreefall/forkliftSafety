@@ -166,6 +166,14 @@ class AlertWorker:
         return start_ms
 
     def _run(self) -> None:
+        # Global anti-spam gate: play at most one alarm per repeat_interval_sec of
+        # silence, regardless of how the decision layer arrived at it (repeat,
+        # re-trigger after a flickering clear, same-zone re-entry...). A strictly
+        # higher-severity zone (genuine escalation) always breaks through.
+        cooldown_ns = int(self._cfg.alert.repeat_interval_sec * 1e9)
+        last_end_ns = 0
+        last_priority = -1
+
         while not self._stop.is_set():
             try:
                 alert: AlertEvent = self._alert_queue.get(timeout=0.5)
@@ -173,6 +181,15 @@ class AlertWorker:
                 continue
 
             alert = self._collapse_pending_alerts(alert)
+
+            priority = self._alert_priority(alert.sound_key)
+            if self._suppress(priority, last_priority, time.time_ns() - last_end_ns, cooldown_ns):
+                logger.debug(
+                    "Alert suppressed (anti-spam): reason={}, sound_key={}",
+                    alert.trigger_reason,
+                    alert.sound_key,
+                )
+                continue
 
             logger.info(
                 "Alert triggered: reason={}, cooldown={}, sound_key={}",
@@ -189,8 +206,10 @@ class AlertWorker:
             alert.audio_started_ms = start_ms
             self._playback_count += 1
 
+            last_end_ns = time.time_ns()
+            last_priority = priority
             if self._audio_done_cb is not None:
-                self._audio_done_cb(alert.camera_id, time.time_ns())
+                self._audio_done_cb(alert.camera_id, last_end_ns)
 
             logger.info(
                 "Alert audio complete: playback #{}, started_ms={:.0f}",
@@ -215,6 +234,12 @@ class AlertWorker:
                 selected = pending
             elif pending_priority == selected_priority and pending.timestamp_ns >= selected.timestamp_ns:
                 selected = pending
+
+    @staticmethod
+    def _suppress(priority: int, last_priority: int, since_last_ns: int, cooldown_ns: int) -> bool:
+        """Anti-spam gate: drop an alarm that is not a higher-severity zone and
+        arrives before ``cooldown_ns`` of silence has elapsed since the last one."""
+        return priority <= last_priority and since_last_ns < cooldown_ns
 
     @staticmethod
     def _alert_priority(sound_key: str) -> int:
