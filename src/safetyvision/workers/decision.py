@@ -19,6 +19,7 @@ class _CameraState:
     state: AlertState = AlertState.IDLE
     last_trigger_ns: int = 0
     last_person_ns: int = 0
+    last_audio_ns: int = 0
     alert_count: int = 0
     last_sound_key: str = ""
 
@@ -58,6 +59,15 @@ class DecisionWorker:
 
     def state_for(self, camera_id: str) -> AlertState:
         return self._states.get(camera_id, _CameraState()).state
+
+    def record_audio_done(self, camera_id: Optional[str], end_ns: int) -> None:
+        """Called by the alert worker when an alarm clip finishes playing.
+
+        Lets the repeat throttle measure the gap from the end of audio playback,
+        so ``repeat_interval_sec`` is the silence between alarms.
+        """
+        cam_state = self._states.setdefault(camera_id or "default", _CameraState())
+        cam_state.last_audio_ns = end_ns
 
     def start(self) -> None:
         self._thread = threading.Thread(
@@ -122,7 +132,12 @@ class DecisionWorker:
                         sound_key=sound_key,
                         camera_id=event.camera_id,
                     )
-                elapsed = now_ns - cam_state.last_trigger_ns
+                # Count the repeat gap from whichever is later: the last alert we
+                # emitted or the moment its audio finished. This makes
+                # repeat_interval_sec the silence *between* alarms, not the
+                # start-to-start spacing — clips can be nearly as long as the gap.
+                ref_ns = max(cam_state.last_trigger_ns, cam_state.last_audio_ns)
+                elapsed = now_ns - ref_ns
                 if elapsed >= repeat_ns:
                     cam_state.last_trigger_ns = now_ns
                     cam_state.alert_count += 1

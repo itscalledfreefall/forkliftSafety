@@ -214,6 +214,28 @@ class TestMultiPersonZones:
         assert alert.cooldown_active is False
         assert alert.sound_key == "danger"
 
+    def test_repeat_gap_measured_from_audio_end(self, worker):
+        """repeat_interval_sec is the silence between alarms, not start-to-start.
+
+        With a 5s interval, a clip that finishes at t=4s must push the next repeat
+        out to t=9s (4s audio end + 5s gap), not t=6s (trigger + 5s).
+        """
+        worker.process_event(_make_event(person=True, ts_ns=1_000_000_000, zone_level="danger"))
+        # Alarm audio finishes at t=4s.
+        worker._w.record_audio_done(TEST_CAM, 4_000_000_000)
+
+        # t=7s: 6s since trigger but only 3s since audio ended -> still throttled.
+        assert worker.process_event(
+            _make_event(person=True, ts_ns=7_000_000_000, zone_level="danger")
+        ) is None
+
+        # t=9.5s: 5.5s since audio ended -> repeat fires.
+        alert = worker.process_event(
+            _make_event(person=True, ts_ns=9_500_000_000, zone_level="danger")
+        )
+        assert alert is not None
+        assert alert.trigger_reason == "repeat_while_present"
+
     def test_boundary_flapping_does_not_respawn_escalation(self, worker):
         """Person on the danger/medium boundary flips zone frame-to-frame.
 

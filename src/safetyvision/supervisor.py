@@ -108,7 +108,9 @@ class Supervisor:
             alert_cb=self._metrics.record_alert,
             event_cb=self._metrics.record_detection_event,
         )
-        self._alert = AlertWorker(cfg, self._alert_q, self._stop)
+        self._alert = AlertWorker(
+            cfg, self._alert_q, self._stop, audio_done_cb=self._decision.record_audio_done
+        )
         self._metrics_worker = MetricsWorker(cfg, self._metrics, self._stop)
 
     def run(self) -> None:

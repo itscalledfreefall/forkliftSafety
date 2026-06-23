@@ -56,10 +56,12 @@ class AlertWorker:
         cfg: SafetyVisionConfig,
         alert_queue: Queue,
         stop_event: threading.Event,
+        audio_done_cb=None,
     ):
         self._cfg = cfg
         self._alert_queue = alert_queue
         self._stop = stop_event
+        self._audio_done_cb = audio_done_cb
         self._thread: Optional[threading.Thread] = None
         self._siren_data = None
         self._voice_data = None
@@ -186,6 +188,9 @@ class AlertWorker:
 
             alert.audio_started_ms = start_ms
             self._playback_count += 1
+
+            if self._audio_done_cb is not None:
+                self._audio_done_cb(alert.camera_id, time.time_ns())
 
             logger.info(
                 "Alert audio complete: playback #{}, started_ms={:.0f}",
