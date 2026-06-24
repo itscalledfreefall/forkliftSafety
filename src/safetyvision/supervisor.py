@@ -95,8 +95,6 @@ class Supervisor:
             self._stop,
             latency_cb=self._metrics.record_inference_latency,
             frame_cb=self._metrics.record_inference_frame,
-            zone_yellow_cb=self._metrics.record_yellow_entry,
-            zone_red_cb=self._metrics.record_red_entry,
         )
         self._decision = DecisionWorker(
             cfg,
@@ -107,6 +105,8 @@ class Supervisor:
             frame_cb=self._metrics.record_decision_frame,
             alert_cb=self._metrics.record_alert,
             event_cb=self._metrics.record_detection_event,
+            zone_yellow_cb=self._metrics.record_yellow_entry,
+            zone_red_cb=self._metrics.record_red_entry,
         )
         self._alert = AlertWorker(
             cfg, self._alert_q, self._stop, audio_done_cb=self._decision.record_audio_done

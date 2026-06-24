@@ -55,8 +55,6 @@ class InferenceWorker:
         stop_event: threading.Event,
         latency_cb=None,
         frame_cb=None,
-        zone_yellow_cb=None,
-        zone_red_cb=None,
         backend: Optional[InferenceBackend] = None,
     ):
         self._cfg = cfg
@@ -65,12 +63,9 @@ class InferenceWorker:
         self._stop = stop_event
         self._latency_cb = latency_cb
         self._frame_cb = frame_cb
-        self._zone_yellow_cb = zone_yellow_cb
-        self._zone_red_cb = zone_red_cb
         self._backend = backend
         self._thread: Optional[threading.Thread] = None
         self._smoothing: dict[str, list[bool]] = {}
-        self._prev_zone_levels: dict[str, str] = {}
         self._camera_by_id = {camera.id: camera for camera in cfg.input.cameras}
         self._distance_strategies: dict[str, DistanceZoneStrategy] = {}
         for camera in cfg.input.cameras:
@@ -151,18 +146,6 @@ class InferenceWorker:
                 zone_level = "medium"
         return zone_level, None
 
-    def _record_zone_entry_transition(self, camera_id: str, zone_level: str) -> None:
-        """Count transitions into stable warning zones per camera."""
-        prev_zone_level = self._prev_zone_levels.get(camera_id, "")
-
-        if zone_level == "medium" and prev_zone_level == "":
-            if self._zone_yellow_cb:
-                self._zone_yellow_cb()
-        elif zone_level == "danger" and prev_zone_level in ("", "medium"):
-            if self._zone_red_cb:
-                self._zone_red_cb()
-        self._prev_zone_levels[camera_id] = zone_level
-
     def _run(self) -> None:
         _pin_to_cores(self._cfg.perf.inference_cpu_cores)
 
@@ -189,7 +172,6 @@ class InferenceWorker:
                 pkt.camera_id, camera_cfg, dets, frame_h, frame_w
             )
             stable_zone_level = zone_level if smoothed else ""
-            self._record_zone_entry_transition(pkt.camera_id, stable_zone_level)
 
             event = DetectionEvent(
                 timestamp_ns=pkt.timestamp_ns,

@@ -6,7 +6,7 @@ from queue import Queue
 import pytest
 
 from safetyvision.config import CameraConfig, SafetyVisionConfig
-from safetyvision.types import AlertState, DetectionEvent
+from safetyvision.types import AlertEvent, AlertState, DetectionEvent
 from safetyvision.workers.decision import DecisionWorker
 
 
@@ -272,3 +272,82 @@ class TestMultiPersonZones:
         # After min_clear_sec
         worker.process_event(_make_event(person=False, ts_ns=5_000_000_000))
         assert worker.state == AlertState.IDLE
+
+
+class TestZoneEntryCounting:
+    """Zone-entry counters must count one entry per presence, not per frame.
+
+    Counting lives in the decision worker so it inherits the debounced episode
+    state machine: a person standing in the red zone (band flickers
+    danger<->medium, or a detection drops for a frame) counts as a single red
+    entry until they clear.
+    """
+
+    def _kind(self, alert):
+        return DecisionWorker._zone_entry_kind(alert)
+
+    def test_kind_episode_open_danger_is_red(self):
+        alert = AlertEvent(0, "person_detected", False, "danger")
+        assert DecisionWorker._zone_entry_kind(alert) == "red"
+
+    def test_kind_episode_open_medium_is_yellow(self):
+        alert = AlertEvent(0, "person_detected", False, "medium")
+        assert DecisionWorker._zone_entry_kind(alert) == "yellow"
+
+    def test_kind_escalation_to_danger_is_red(self):
+        alert = AlertEvent(0, "zone_escalated", False, "danger")
+        assert DecisionWorker._zone_entry_kind(alert) == "red"
+
+    def test_kind_repeat_does_not_count(self):
+        alert = AlertEvent(0, "repeat_while_present", True, "danger")
+        assert DecisionWorker._zone_entry_kind(alert) is None
+
+    def _tally(self, worker, frames):
+        """Drive frames through process_event, tallying zone-entry counters the
+        same way DecisionWorker._run does."""
+        counts = {"yellow": 0, "red": 0}
+        for ts_ns, person, zone in frames:
+            alert = worker.process_event(_make_event(person=person, ts_ns=ts_ns, zone_level=zone))
+            if alert is not None:
+                kind = self._kind(alert)
+                if kind is not None:
+                    counts[kind] += 1
+        return counts
+
+    def test_red_counts_once_through_flicker(self, worker):
+        """A single presence that flickers danger<->medium and drops a frame
+        counts exactly one red entry (and the opening yellow)."""
+        ms = 1_000_000
+        frames = [
+            (1000 * ms, True, "medium"),  # episode opens -> yellow
+            (1040 * ms, True, "danger"),  # escalation -> red
+            (1080 * ms, True, "medium"),  # boundary flicker, no count
+            (1120 * ms, True, "danger"),  # back to danger, no recount
+            (1160 * ms, True, ""),        # dropped detection (< min_clear), no clear
+            (1200 * ms, True, "danger"),  # reacquired, no recount
+            (1240 * ms, True, "medium"),
+            (1280 * ms, True, "danger"),
+        ]
+        assert self._tally(worker, frames) == {"yellow": 1, "red": 1}
+
+    def test_separate_presences_count_again(self, worker):
+        """After the person clears (min_clear_sec of no person), a new entry
+        into the red zone counts a fresh red entry."""
+        ms = 1_000_000
+        frames = [
+            (1000 * ms, True, "danger"),   # presence 1 -> red
+            (1040 * ms, True, "danger"),   # repeat-throttled, no count
+            (5000 * ms, False, ""),        # 3.96s of no person -> clears
+            (6000 * ms, True, "danger"),   # presence 2 -> red
+        ]
+        assert self._tally(worker, frames) == {"yellow": 0, "red": 2}
+
+    def test_medium_only_presence_counts_yellow_only(self, worker):
+        ms = 1_000_000
+        frames = [
+            (1000 * ms, True, "medium"),
+            (1040 * ms, True, "medium"),
+            (1080 * ms, True, ""),
+            (1120 * ms, True, "medium"),
+        ]
+        assert self._tally(worker, frames) == {"yellow": 1, "red": 0}

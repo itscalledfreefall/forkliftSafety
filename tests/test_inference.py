@@ -1,15 +1,12 @@
 """Tests for zone classification and HailoBackend pre/postprocessing."""
 
-import threading
-from queue import Queue
-
 import numpy as np
 import pytest
 
 from safetyvision.config import CameraConfig, SafetyVisionConfig
 from safetyvision.inference.hailo_backend import HailoBackend
 from safetyvision.types import Detection
-from safetyvision.workers.inference import InferenceWorker, _classify_detection_zone
+from safetyvision.workers.inference import _classify_detection_zone
 
 
 class TestZoneBands:
@@ -87,47 +84,6 @@ class TestZoneBands:
 
         d = Detection(x1=0, y1=100, x2=100, y2=220, confidence=0.9, class_id=0)
         assert _classify_detection_zone(d, 480, cfg, cam) == "danger"
-
-
-class TestInferenceWorkerConstruction:
-    def test_accepts_zone_callbacks(self):
-        cfg = SafetyVisionConfig()
-        cfg.input.cameras = [CameraConfig(id="back", rtsp_url="rtsp://x/y")]
-        worker = InferenceWorker(
-            cfg,
-            Queue(),
-            Queue(),
-            threading.Event(),
-            zone_yellow_cb=lambda: None,
-            zone_red_cb=lambda: None,
-        )
-        assert worker._zone_yellow_cb is not None
-        assert worker._zone_red_cb is not None
-        assert worker._prev_zone_levels == {}
-
-    def test_zone_entry_transitions_count_once_per_episode(self):
-        cfg = SafetyVisionConfig()
-        cfg.input.cameras = [CameraConfig(id="back", rtsp_url="rtsp://x/y")]
-        counts = {"yellow": 0, "red": 0}
-        worker = InferenceWorker(
-            cfg,
-            Queue(),
-            Queue(),
-            threading.Event(),
-            zone_yellow_cb=lambda: counts.__setitem__("yellow", counts["yellow"] + 1),
-            zone_red_cb=lambda: counts.__setitem__("red", counts["red"] + 1),
-        )
-
-        worker._record_zone_entry_transition("back", "")
-        worker._record_zone_entry_transition("back", "medium")
-        worker._record_zone_entry_transition("back", "medium")
-        worker._record_zone_entry_transition("back", "danger")
-        worker._record_zone_entry_transition("back", "danger")
-        worker._record_zone_entry_transition("back", "medium")
-        worker._record_zone_entry_transition("back", "")
-        worker._record_zone_entry_transition("back", "danger")
-
-        assert counts == {"yellow": 1, "red": 2}
 
 
 class TestHailoPreprocess:

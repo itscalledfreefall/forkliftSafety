@@ -41,6 +41,8 @@ class DecisionWorker:
         frame_cb=None,
         alert_cb=None,
         event_cb=None,
+        zone_yellow_cb=None,
+        zone_red_cb=None,
     ):
         self._cfg = cfg
         self._in_queue = in_queue
@@ -50,6 +52,8 @@ class DecisionWorker:
         self._frame_cb = frame_cb
         self._alert_cb = alert_cb
         self._event_cb = event_cb
+        self._zone_yellow_cb = zone_yellow_cb
+        self._zone_red_cb = zone_red_cb
         self._thread: Optional[threading.Thread] = None
         self._states: dict[str, _CameraState] = {}
 
@@ -157,6 +161,22 @@ class DecisionWorker:
         return None
 
     @staticmethod
+    def _zone_entry_kind(alert: AlertEvent) -> Optional[str]:
+        """Which zone-entry counter (if any) a freshly emitted alert represents.
+
+        Counts a presence once: the episode-opening alert, or the first
+        escalation into the danger zone. Repeats while the person stays present
+        do not count, so a person standing in the red zone (where the band
+        classification flickers danger<->medium frame-to-frame, or a detection
+        drops for a frame) is counted as a single entry until they clear.
+        """
+        if alert.trigger_reason == "person_detected":
+            return "red" if alert.sound_key == "danger" else "yellow"
+        if alert.trigger_reason == "zone_escalated" and alert.sound_key == "danger":
+            return "red"
+        return None
+
+    @staticmethod
     def _sound_priority(sound_key: str) -> int:
         if sound_key == "danger":
             return 2
@@ -190,6 +210,11 @@ class DecisionWorker:
                 self._event_cb(event)
 
             if alert is not None:
+                kind = self._zone_entry_kind(alert)
+                if kind == "red" and self._zone_red_cb:
+                    self._zone_red_cb()
+                elif kind == "yellow" and self._zone_yellow_cb:
+                    self._zone_yellow_cb()
                 try:
                     self._alert_queue.put_nowait(alert)
                     if self._alert_cb:
